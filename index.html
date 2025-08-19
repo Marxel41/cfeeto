@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dein Täglicher CO2-Fußabdruck</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, collection, query, orderBy, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Global Variables provided by Canvas Environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = (typeof __firebase_config !== 'undefined' && __firebase_config) ? JSON.parse(__firebase_config) : {}; // Dies wurde korrigiert für robustere Initialisierung
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app;
+        let auth;
+        let db;
+        let currentUserId = null;
+        let userEmail = null;
+
+        async function initFirebase() {
+            try {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Sign in with custom token if available, otherwise anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        userEmail = user.email; // Store email if available
+                        document.getElementById('user-info').textContent = userEmail ? `Angemeldet als: ${userEmail}` : `Gast-Nutzer-ID: ${currentUserId}`;
+                        document.getElementById('auth-section').classList.add('hidden');
+                        
+                        // Check if initial profile data exists
+                        const userDocRef = doc(db, 'artifacts', appId, 'users', currentUserId);
+                        const userDocSnap = await getDoc(userDocRef);
+                        
+                        if (!userDocSnap.exists() || !userDocSnap.data().initialProfileCompleted) {
+                            showInitialProfileForm();
+                        } else {
+                            showAppContent();
+                        }
+                    } else {
+                        currentUserId = null;
+                        userEmail = null;
+                        document.getElementById('user-info').textContent = '';
+                        document.getElementById('auth-section').classList.remove('hidden');
+                        document.getElementById('app-content').classList.add('hidden');
+                        document.getElementById('initial-profile-section').classList.add('hidden');
+                    }
+                });
+            } catch (error) {
+                console.error("Fehler beim Initialisieren von Firebase:", error);
+                alert("Fehler beim Laden der Anwendung. Bitte versuchen Sie es später erneut.");
+            }
+        }
+
+        window.firebase = {
+            auth,
+            db,
+            currentUserId,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            signOut,
+            doc,
+            setDoc,
+            collection,
+            query,
+            orderBy,
+            onSnapshot,
+            updateDoc,
+            appId // Make appId available globally for database path
+        };
+
+        // initFirebase(); // Dieser Aufruf wurde entfernt und in DOMContentLoaded verschoben
+    </script>
+    <!-- Chosen Palette: Calm Neutrals with Green/Blue Accents -->
+    <!-- Application Structure Plan: The application now has three main states/sections to ensure user authentication and persistent data storage. Firstly, an **Authentication** section guides users through login or registration, securing individual data. Secondly, an **Initial Setup (Profile Questionnaire)** captures foundational user data (e.g., household size) upon first login, informing more accurate CO2 calculations. Thirdly, the **Daily Tracker & Dashboard** facilitates daily CO2 input and visualizes historical trends, leveraging Firestore for secure, per-user data persistence. This structured flow prioritizes user onboarding, data integrity, and continuous tracking. -->
+    <!-- Visualization & Content Choices: 
+        - Authentication Forms (HTML): Goal: User access control. Method: Standard input fields for email/password, submit buttons. Interaction: Call Firebase Auth functions (signInWithEmailAndPassword, createUserWithEmailAndPassword). Justification: Provides secure user access before data interaction.
+        - Initial Profile Questionnaire (HTML Form): Goal: Gather static user data. Method: Form with simple inputs for household size. Interaction: Submit to Firestore user document. Justification: Collects baseline for future personalized insights.
+        - Daily Questionnaire (HTML Form): Goal: Daily data gathering. Method: Multi-step form with sliders and checkboxes for mobile-friendly input. Interaction: Submit to Firestore as a new daily entry. Justification: Core daily data collection, directly updates user's persistent record.
+        - Daily Breakdown (Donut Chart): Goal: Compare daily CO2 impact by category. Method: Chart.js Donut Chart. Interaction: Hover for details. Justification: Provides immediate visual comparison of impact areas. Library: Chart.js.
+        - Historical Trend (Line Chart): Goal: Show change over time. Method: Chart.js Line Chart displaying total daily footprint. Interaction: Tooltips. Justification: Visualizes user progress and patterns, sourced directly from Firestore. Library: Chart.js.
+        - Personalized Tips (Dynamic Text): Goal: Provide actionable advice. Method: Text block dynamically updated based on the highest-emitting category of the day. Justification: Makes advice relevant and encourages behavior change based on collected data.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        .step { display: none; }
+        .step.active { display: block; }
+        .chart-container { position: relative; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto; height: 300px; max-height: 400px; }
+        @media (min-width: 768px) { .chart-container { height: 350px; } }
+        .loading-overlay { display: flex; justify-content: center; align-items: center; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255, 255, 255, 0.8); z-index: 1000; }
+        .spinner { border: 4px solid rgba(0, 0, 0, 0.1); border-left-color: #10B981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-stone-100 text-stone-800">
+
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="spinner"></div>
+        <p class="ml-4 text-emerald-700 font-semibold">Wird geladen...</p>
+    </div>
+
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl hidden" id="main-content">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-emerald-700">Dein Täglicher CO2-Fußabdruck</h1>
+            <p class="text-stone-600 mt-2">Erfasse deine täglichen Aktivitäten und lerne, wie du deinen ökologischen Fußabdruck reduzieren kannst.</p>
+            <div id="user-info" class="text-sm text-stone-500 mt-2"></div>
+            <button id="logout-btn" class="hidden bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition mt-4">Abmelden</button>
+        </header>
+
+        <main id="app">
+            <!-- Authentication Section -->
+            <section id="auth-section" class="bg-white p-6 rounded-lg shadow-md max-w-md mx-auto">
+                <h2 class="text-2xl font-semibold mb-4 text-center">Anmelden oder Registrieren</h2>
+                <form id="auth-form" class="space-y-4">
+                    <div>
+                        <label for="auth-email" class="block mb-1">E-Mail:</label>
+                        <input type="email" id="auth-email" class="w-full p-2 border border-stone-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500" required>
+                    </div>
+                    <div>
+                        <label for="auth-password" class="block mb-1">Passwort:</label>
+                        <input type="password" id="auth-password" class="w-full p-2 border border-stone-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500" required>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <button type="button" id="login-btn" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Anmelden</button>
+                        <button type="button" id="register-btn" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">Registrieren</button>
+                    </div>
+                    <p id="auth-error-message" class="text-red-500 text-sm mt-2 hidden"></p>
+                </form>
+            </section>
+
+            <!-- Initial Profile Section (New Users) -->
+            <section id="initial-profile-section" class="hidden bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-2xl font-semibold mb-4 text-center text-emerald-700">Dein Profil einrichten</h2>
+                <p class="text-stone-600 text-center mb-6">Bitte beantworte diese Fragen einmalig für eine bessere Berechnung deines Fußabdrucks.</p>
+                <form id="initial-profile-form" class="space-y-4">
+                    <div>
+                        <label for="household-size" class="block mb-1">Wie viele Personen leben in deinem Haushalt?</label>
+                        <input type="number" id="household-size" min="1" value="1" class="w-full p-2 border border-stone-300 rounded-md">
+                    </div>
+                    <div>
+                        <label for="dwelling-type" class="block mb-1">Art der Wohnung:</label>
+                        <select id="dwelling-type" class="w-full p-2 border border-stone-300 rounded-md">
+                            <option value="apartment">Wohnung</option>
+                            <option value="house">Haus</option>
+                        </select>
+                    </div>
+                    <div class="text-center">
+                        <button type="submit" class="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700 transition text-lg">Profil speichern</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Main App Content (Questionnaire & Dashboard) -->
+            <div id="app-content" class="hidden">
+                <!-- Questionnaire Section -->
+                <section id="questionnaire" class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-2xl font-semibold mb-4 text-center">Heutige Daten eingeben</h2>
+                    <div id="welcome-message" class="text-center mb-4">
+                        <p>Fülle den Fragebogen aus, um deinen CO2-Ausstoß für heute zu berechnen. Es dauert nur eine Minute!</p>
+                    </div>
+
+                    <form id="co2-form">
+                        <!-- Step 1: Mobilität -->
+                        <div id="step-1" class="step active">
+                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">1. Mobilität</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="car-km" class="block mb-1">Kilometer mit dem Verbrenner-Auto:</label>
+                                    <input type="range" id="car-km" min="0" max="200" value="0" class="w-full">
+                                    <span class="text-sm text-stone-500"><span id="car-km-value">0</span> km</span>
+                                </div>
+                                <div>
+                                    <label for="public-transport-km" class="block mb-1">Kilometer mit öffentlichen Verkehrsmitteln (Bus/Bahn):</label>
+                                    <input type="range" id="public-transport-km" min="0" max="200" value="0" class="w-full">
+                                    <span class="text-sm text-stone-500"><span id="public-transport-km-value">0</span> km</span>
+                                </div>
+                            </div>
+                            <div class="text-right mt-6">
+                                <button type="button" onclick="nextStep(2)" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Weiter</button>
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Ernährung -->
+                        <div id="step-2" class="step">
+                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">2. Ernährung</h3>
+                            <div class="space-y-4">
+                                <p>Welche der folgenden Lebensmittel hast du heute gegessen?</p>
+                                <div class="flex flex-col space-y-2">
+                                    <label class="flex items-center"><input type="checkbox" name="food" value="beef" class="mr-2"> Rindfleisch</label>
+                                    <label class="flex items-center"><input type="checkbox" name="food" value="pork_poultry" class="mr-2"> Schwein/Geflügel</label>
+                                    <label class="flex items-center"><input type="checkbox" name="food" value="dairy" class="mr-2"> Viele Milchprodukte</label>
+                                    <label class="flex items-center"><input type="checkbox" name="food" value="vegetarian" class="mr-2"> Überwiegend vegetarisch/vegan</label>
+                                </div>
+                            </div>
+                            <div class="flex justify-between mt-6">
+                                <button type="button" onclick="prevStep(1)" class="bg-stone-200 text-stone-700 px-6 py-2 rounded-lg hover:bg-stone-300 transition">Zurück</button>
+                                <button type="button" onclick="nextStep(3)" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Weiter</button>
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Energie zu Hause -->
+                        <div id="step-3" class="step">
+                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">3. Energie zu Hause</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="shower-min" class="block mb-1">Minuten heiß geduscht:</label>
+                                    <input type="range" id="shower-min" min="0" max="30" value="5" class="w-full">
+                                    <span class="text-sm text-stone-500"><span id="shower-min-value">5</span> min</span>
+                                </div>
+                                <div>
+                                    <p class="mb-1">Heizung stark genutzt?</p>
+                                    <label class="mr-4"><input type="radio" name="heating" value="yes"> Ja</label>
+                                    <label><input type="radio" name="heating" value="no" checked> Nein</label>
+                                </div>
+                            </div>
+                            <div class="flex justify-between mt-6">
+                                <button type="button" onclick="prevStep(2)" class="bg-stone-200 text-stone-700 px-6 py-2 rounded-lg hover:bg-stone-300 transition">Zurück</button>
+                                <button type="button" onclick="nextStep(4)" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Weiter</button>
+                            </div>
+                        </div>
+
+                        <!-- Step 4: Konsum -->
+                        <div id="step-4" class="step">
+                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">4. Konsum</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <p class="mb-1">Neue Produkte gekauft (Kleidung, Elektronik etc.)?</p>
+                                    <label class="mr-4"><input type="radio" name="shopping" value="yes"> Ja</label>
+                                    <label><input type="radio" name="shopping" value="no" checked> Nein</label>
+                                </div>
+                            </div>
+                            <div class="flex justify-between mt-6">
+                                <button type="button" onclick="prevStep(3)" class="bg-stone-200 text-stone-700 px-6 py-2 rounded-lg hover:bg-stone-300 transition">Zurück</button>
+                                <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">Berechnen</button>
+                            </div>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- Dashboard Section -->
+                <section id="dashboard" class="hidden mt-8">
+                    <div class="text-center mb-8">
+                        <h2 class="text-3xl font-bold">Dein Dashboard</h2>
+                        <p class="text-stone-600">Hier siehst du deine Ergebnisse und Fortschritte.</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div class="bg-white p-6 rounded-lg shadow-md flex flex-col justify-center items-center text-center">
+                            <h3 class="text-xl font-semibold mb-2">Dein heutiger Fußabdruck</h3>
+                            <p class="text-5xl font-bold text-emerald-600"><span id="total-co2">0</span> kg CO₂e</p>
+                            <p class="text-stone-500 mt-2">Das entspricht etwa der Emission einer 🚗-Fahrt von <span id="co2-equivalent">0</span> km.</p>
+                        </div>
+                        <div class="bg-white p-6 rounded-lg shadow-md">
+                            <h3 class="text-xl font-semibold mb-4 text-center">Aufschlüsselung nach Kategorie</h3>
+                            <div class="chart-container">
+                                <canvas id="daily-breakdown-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-lg shadow-md mt-8">
+                        <h3 class="text-xl font-semibold mb-4 text-center">Dein Verlauf (letzte 7 Tage)</h3>
+                        <div class="chart-container" style="height: 350px;">
+                            <canvas id="historical-trend-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white p-6 rounded-lg shadow-md mt-8">
+                        <h3 class="text-xl font-semibold mb-2">💡 Dein persönlicher Tipp</h3>
+                        <p id="personalized-tip" class="text-stone-700">Fülle den Fragebogen aus, um einen Tipp zu erhalten, der auf deinen größten Einflussbereich zugeschnitten ist.</p>
+                    </div>
+
+                    <div class="text-center mt-8">
+                        <button onclick="showQuestionnaire()" class="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700 transition text-lg">Neuen Tag eintragen</button>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        let currentStep = 1;
+        let dailyBreakdownChart;
+        let historicalTrendChart;
+
+        const emissionFactors = {
+            car_km: 0.15, // kg CO2e per km
+            public_transport_km: 0.04, // kg CO2e per km
+            beef: 4.0, // kg CO2e per serving
+            pork_poultry: 1.2, // kg CO2e per serving
+            dairy: 0.8, // kg CO2e for high consumption
+            vegetarian: -0.5, // Bonus for being veggie
+            shower_min: 0.1, // kg CO2e per minute
+            heating_yes: 3.0, // kg CO2e for a day of heavy heating
+            shopping_yes: 2.0, // kg CO2e for new item (average)
+        };
+
+        const authErrorMessage = document.getElementById('auth-error-message');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const mainContent = document.getElementById('main-content');
+
+        function showLoading() { loadingOverlay.classList.remove('hidden'); mainContent.classList.add('hidden'); }
+        function hideLoading() { loadingOverlay.classList.add('hidden'); mainContent.classList.remove('hidden'); }
+
+        function showStep(step) {
+            document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
+            document.getElementById(`step-${step}`).classList.add('active');
+            currentStep = step;
+        }
+
+        function nextStep(step) {
+            showStep(step);
+        }
+
+        function prevStep(step) {
+            showStep(step);
+        }
+
+        function updateSliderValue(sliderId, valueId) {
+            const slider = document.getElementById(sliderId);
+            const valueSpan = document.getElementById(valueId);
+            if (slider && valueSpan) {
+                slider.addEventListener('input', () => {
+                    valueSpan.textContent = slider.value;
+                });
+            }
+        }
+
+        updateSliderValue('car-km', 'car-km-value');
+        updateSliderValue('public-transport-km', 'public-transport-km-value');
+        updateSliderValue('shower-min', 'shower-min-value');
+        
+        // --- Authentication Logic ---
+        document.getElementById('login-btn').addEventListener('click', async () => {
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            authErrorMessage.classList.add('hidden');
+            showLoading();
+            try {
+                await firebase.signInWithEmailAndPassword(firebase.auth, email, password);
+            } catch (error) {
+                console.error("Login Fehler:", error);
+                authErrorMessage.textContent = "Fehler beim Anmelden: " + error.message;
+                authErrorMessage.classList.remove('hidden');
+            } finally {
+                hideLoading();
+            }
+        });
+
+        document.getElementById('register-btn').addEventListener('click', async () => {
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            authErrorMessage.classList.add('hidden');
+            showLoading();
+            try {
+                await firebase.createUserWithEmailAndPassword(firebase.auth, email, password);
+                // After successful registration, save initial profile status
+                const userDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.auth.currentUser.uid);
+                await firebase.setDoc(userDocRef, { email: email, initialProfileCompleted: false }, { merge: true });
+            } catch (error) {
+                console.error("Registrierungs Fehler:", error);
+                authErrorMessage.textContent = "Fehler bei der Registrierung: " + error.message;
+                authErrorMessage.classList.remove('hidden');
+            } finally {
+                hideLoading();
+            }
+        });
+
+        document.getElementById('logout-btn').addEventListener('click', async () => {
+            showLoading();
+            try {
+                await firebase.signOut(firebase.auth);
+            } catch (error) {
+                console.error("Logout Fehler:", error);
+                alert("Fehler beim Abmelden.");
+            } finally {
+                hideLoading();
+            }
+        });
+
+        // --- Initial Profile Logic ---
+        function showInitialProfileForm() {
+            document.getElementById('app-content').classList.add('hidden');
+            document.getElementById('auth-section').classList.add('hidden');
+            document.getElementById('initial-profile-section').classList.remove('hidden');
+            document.getElementById('logout-btn').classList.remove('hidden'); // Show logout even during initial setup
+        }
+
+        document.getElementById('initial-profile-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const householdSize = document.getElementById('household-size').value;
+            const dwellingType = document.getElementById('dwelling-type').value;
+
+            showLoading();
+            try {
+                const userDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId);
+                await firebase.updateDoc(userDocRef, {
+                    householdSize: parseInt(householdSize),
+                    dwellingType: dwellingType,
+                    initialProfileCompleted: true
+                });
+                showAppContent(); // Proceed to main app after initial profile
+            } catch (error) {
+                console.error("Fehler beim Speichern des Profils:", error);
+                alert("Fehler beim Speichern deines Profils. Bitte versuche es erneut.");
+            } finally {
+                hideLoading();
+            }
+        });
+
+        function showAppContent() {
+            document.getElementById('auth-section').classList.add('hidden');
+            document.getElementById('initial-profile-section').classList.add('hidden');
+            document.getElementById('app-content').classList.remove('hidden');
+            document.getElementById('logout-btn').classList.remove('hidden'); // Ensure logout is visible
+            checkTodayEntryAndDisplay();
+        }
+
+        // --- Daily CO2 Calculation and Firestore Saving ---
+        document.getElementById('co2-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            calculateAndSaveCO2();
+        });
+
+        async function calculateAndSaveCO2() {
+            if (!firebase.currentUserId) {
+                alert("Bitte melden Sie sich an, um Daten zu speichern.");
+                return;
+            }
+
+            const scores = {
+                mobility: 0,
+                nutrition: 0,
+                energy: 0,
+                consumption: 0,
+            };
+
+            scores.mobility += parseFloat(document.getElementById('car-km').value) * emissionFactors.car_km;
+            scores.mobility += parseFloat(document.getElementById('public-transport-km').value) * emissionFactors.public_transport_km;
+
+            document.querySelectorAll('input[name="food"]:checked').forEach(el => {
+                scores.nutrition += emissionFactors[el.value] || 0;
+            });
+            if (scores.nutrition < 0) scores.nutrition = 0;
+
+            scores.energy += parseFloat(document.getElementById('shower-min').value) * emissionFactors.shower_min;
+            if (document.querySelector('input[name="heating"]:checked').value === 'yes') {
+                scores.energy += emissionFactors.heating_yes;
+            }
+
+            if (document.querySelector('input[name="shopping"]:checked').value === 'yes') {
+                scores.consumption += emissionFactors.shopping_yes;
+            }
+
+            const totalCO2 = Object.values(scores).reduce((sum, val) => sum + val, 0);
+            const today = new Date().toISOString().split('T')[0];
+
+            showLoading();
+            try {
+                const dailyDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId, 'daily_entries', today);
+                await firebase.setDoc(dailyDocRef, {
+                    date: today,
+                    scores: scores,
+                    total: totalCO2
+                });
+                showDashboard();
+            } catch (error) {
+                console.error("Fehler beim Speichern der Tagesdaten:", error);
+                alert("Fehler beim Speichern Ihrer Daten. Bitte versuchen Sie es erneut.");
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function showDashboard() {
+            document.getElementById('questionnaire').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            updateDashboard();
+        }
+
+        window.showQuestionnaire = function() { // Make global for onclick
+            document.getElementById('dashboard').classList.add('hidden');
+            document.getElementById('questionnaire').classList.remove('hidden');
+            document.getElementById('co2-form').reset();
+            showStep(1);
+            // Reset slider values display
+            document.getElementById('car-km-value').textContent = '0';
+            document.getElementById('public-transport-km-value').textContent = '0';
+            document.getElementById('shower-min-value').textContent = '5';
+        }
+
+        async function updateDashboard() {
+            if (!firebase.currentUserId) return;
+
+            showLoading();
+            try {
+                const dailyEntriesColRef = firebase.collection(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId, 'daily_entries');
+                const q = firebase.query(dailyEntriesColRef); // Removed orderBy as per instructions
+                
+                // Using onSnapshot for real-time updates and initial fetch
+                firebase.onSnapshot(q, (snapshot) => {
+                    const history = [];
+                    snapshot.forEach(doc => {
+                        history.push(doc.data());
+                    });
+                    history.sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort client-side
+                    
+                    if (history.length === 0) {
+                        document.getElementById('total-co2').textContent = '0.00';
+                        document.getElementById('co2-equivalent').textContent = '0';
+                        renderDailyBreakdownChart({ mobility: 0, nutrition: 0, energy: 0, consumption: 0 });
+                        renderHistoricalTrendChart([]);
+                        document.getElementById('personalized-tip').textContent = 'Fülle den Fragebogen aus, um einen Tipp zu erhalten!';
+                        return;
+                    }
+
+                    const todayData = history[history.length - 1];
+                    const totalCO2 = todayData.total;
+                    
+                    document.getElementById('total-co2').textContent = totalCO2.toFixed(2);
+                    document.getElementById('co2-equivalent').textContent = (totalCO2 / emissionFactors.car_km).toFixed(0);
+
+                    renderDailyBreakdownChart(todayData.scores);
+                    renderHistoricalTrendChart(history);
+                    updatePersonalizedTip(todayData.scores);
+                    hideLoading(); // Hide loading only after all charts and data are updated
+                }, (error) => {
+                    console.error("Fehler beim Laden der historischen Daten:", error);
+                    alert("Fehler beim Laden Ihrer Daten.");
+                    hideLoading();
+                });
+
+            } catch (error) {
+                console.error("Fehler beim Laden des Dashboards:", error);
+                alert("Fehler beim Laden des Dashboards. Bitte versuchen Sie es erneut.");
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function renderDailyBreakdownChart(scores) {
+            const ctx = document.getElementById('daily-breakdown-chart').getContext('2d');
+            if (dailyBreakdownChart) {
+                dailyBreakdownChart.destroy();
+            }
+            dailyBreakdownChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Mobilität', 'Ernährung', 'Energie', 'Konsum'],
+                    datasets: [{
+                        data: [scores.mobility, scores.nutrition, scores.energy, scores.consumption],
+                        backgroundColor: ['#34D399', '#FBBF24', '#60A5FA', '#F87171'],
+                        borderColor: '#F5F5F4',
+                        borderWidth: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed !== null) {
+                                        label += context.parsed.toFixed(2) + ' kg CO₂e';
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderHistoricalTrendChart(history) {
+            const last7Days = history.slice(-7);
+            const labels = last7Days.map(entry => new Date(entry.date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }));
+            const data = last7Days.map(entry => entry.total);
+
+            const ctx = document.getElementById('historical-trend-chart').getContext('2d');
+            if (historicalTrendChart) {
+                historicalTrendChart.destroy();
+            }
+            historicalTrendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Täglicher CO₂-Fußabdruck (kg)',
+                        data: data,
+                        borderColor: '#10B981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+        
+        function updatePersonalizedTip(scores) {
+            const tipElement = document.getElementById('personalized-tip');
+            const maxCategory = Object.keys(scores).reduce((a, b) => scores[a] > scores[b] ? a : b);
+
+            let tip = '';
+            switch (maxCategory) {
+                case 'mobility':
+                    tip = 'Dein größter Hebel heute war die Mobilität. Versuche morgen, eine Strecke zu Fuß, mit dem Rad oder den öffentlichen Verkehrsmitteln zurückzulegen.';
+                    break;
+                case 'nutrition':
+                    tip = 'Die Ernährung hatte heute den größten Einfluss. Eine pflanzliche Mahlzeit mehr pro Tag kann einen riesigen Unterschied machen, besonders wenn sie Rindfleisch ersetzt.';
+                    break;
+                case 'energy':
+                    tip = 'Der Energieverbrauch zu Hause war heute dein Hauptfaktor. Achte darauf, das Licht in ungenutzten Räumen auszuschalten und die Duschzeit um ein paar Minuten zu verkürzen.';
+                    break;
+                case 'consumption':
+                    tip = 'Dein Konsum hat heute am meisten beigetragen. Überlege vor dem nächsten Kauf, ob du den Artikel wirklich brauchst oder ob es eine gebrauchte Alternative gibt.';
+                    break;
+                default:
+                    tip = 'Dein Fußabdruck ist heute sehr ausgeglichen. Super gemacht!';
+            }
+            tipElement.textContent = tip;
+        }
+
+        async function checkTodayEntryAndDisplay() {
+            if (!firebase.currentUserId) {
+                // Diese Logik wird durch onAuthStateChanged behandelt, das die Authentifizierungssektion anzeigt.
+                // Hier brauchen wir kein showLoading, da es bereits im onAuthStateChanged Handler gesetzt wird.
+                return;
+            }
+            
+            showLoading(); // Lade-Overlay anzeigen, während Daten abgerufen werden
+            const today = new Date().toISOString().split('T')[0];
+            const dailyDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId, 'daily_entries', today);
+
+            try {
+                const docSnap = await firebase.getDoc(dailyDocRef);
+                if (docSnap.exists()) {
+                    showDashboard();
+                } else {
+                    showQuestionnaire();
+                }
+            } catch (error) {
+                console.error("Fehler beim Prüfen des Tageseintrags:", error);
+                alert("Fehler beim Laden der Daten.");
+                showQuestionnaire(); // Im Fehlerfall auf den Fragebogen zurückfallen
+            } finally {
+                hideLoading(); // Lade-Overlay ausblenden, sobald die Anzeige abgeschlossen ist
+            }
+        }
+
+        // Initialisiere Firebase und zeige den Ladebildschirm erst, wenn der DOM bereit ist.
+        document.addEventListener('DOMContentLoaded', () => {
+             document.getElementById('main-content').classList.add('hidden');
+             document.getElementById('loading-overlay').classList.remove('hidden');
+             initFirebase(); // Firebase-Initialisierung hier aufrufen
+        });
+    </script>
+</body>
+</html>
