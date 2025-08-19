@@ -14,8 +14,19 @@
 
         // Firebase Global Variables provided by Canvas Environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = (typeof __firebase_config !== 'undefined' && __firebase_config) ? JSON.parse(__firebase_config) : {}; // Dies wurde korrigiert für robustere Initialisierung
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // Die Firebase-Konfiguration wurde direkt in den Code eingebettet.
+        // Die Umgebungsvariable __firebase_config wird für diese Konfiguration nicht mehr verwendet.
+        const firebaseConfig = {
+            apiKey: "AIzaSyCur0L3VsfjhgzQi6aTqQVtSs0opdh6d7s",
+            authDomain: "cfeeto.firebaseapp.com",
+            projectId: "cfeeto",
+            storageBucket: "cfeeto.firebasestorage.app",
+            messagingSenderId: "566985524293",
+            appId: "1:566985524293:web:499958c80b86121a6e4f2c",
+            measurementId: "G-81KT7JSSSP"
+        };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initialAuthToken : null;
+
 
         let app;
         let auth;
@@ -481,7 +492,8 @@
                     total: totalCO2
                 });
                 showDashboard();
-            } catch (error) {
+            }
+            catch (error) {
                 console.error("Fehler beim Speichern der Tagesdaten:", error);
                 alert("Fehler beim Speichern Ihrer Daten. Bitte versuchen Sie es erneut.");
             } finally {
