@@ -1,704 +1,615 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dein Täglicher CO2-Fußabdruck</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, collection, query, orderBy, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import React, { useState, useEffect, useRef } from 'react';
+import { LucideDices, LucideCrown, LucideArrowLeft, LucideUsers, LucidePlay, LucideStar, LucideHelpCircle } from 'lucide-react';
 
-        // Firebase Global Variables provided by Canvas Environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        // Die Firebase-Konfiguration wurde direkt in den Code eingebettet.
-        // Die Umgebungsvariable __firebase_config wird für diese Konfiguration nicht mehr verwendet.
-        const firebaseConfig = {
-            apiKey: "AIzaSyCur0L3VsfjhgzQi6aTqQVtSs0opdh6d7s",
-            authDomain: "cfeeto.firebaseapp.com",
-            projectId: "cfeeto",
-            storageBucket: "cfeeto.firebasestorage.app",
-            messagingSenderId: "566985524293",
-            appId: "1:566985524293:web:499958c80b86121a6e4f2c",
-            measurementId: "G-81KT7JSSSP"
-        };
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initialAuthToken : null;
+// --- Helper-Funktionen & Konfiguration ---
 
+const COLORS = ['red', 'green', 'yellow', 'blue'];
 
-        let app;
-        let auth;
-        let db;
-        let currentUserId = null;
-        let userEmail = null;
+const START_POSITIONS = {
+  red: [0, 1, 11, 12], green: [9, 10, 20, 21], blue: [99, 100, 110, 111], yellow: [108, 109, 119, 120],
+};
 
-        async function initFirebase() {
-            try {
-                app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
+const PATH = [
+  44, 45, 46, 47, 48, 37, 26, 15, 4, 5, 6, 17, 28, 39, 50, 51, 52, 53, 54, 65,
+  76, 75, 74, 73, 72, 83, 94, 105, 116, 115, 114, 103, 92, 81, 70, 69, 68, 67, 66, 55
+];
 
-                // Sign in with custom token if available, otherwise anonymously
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
+const PATH_START_CELL = { red: 44, green: 6, yellow: 76, blue: 114 };
+const PATH_START_INDEX = { red: 0, green: 10, yellow: 20, blue: 30 };
 
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        currentUserId = user.uid;
-                        userEmail = user.email; // Store email if available
-                        document.getElementById('user-info').textContent = userEmail ? `Angemeldet als: ${userEmail}` : `Gast-Nutzer-ID: ${currentUserId}`;
-                        document.getElementById('auth-section').classList.add('hidden');
-                        
-                        // Check if initial profile data exists
-                        const userDocRef = doc(db, 'artifacts', appId, 'users', currentUserId);
-                        const userDocSnap = await getDoc(userDocRef);
-                        
-                        if (!userDocSnap.exists() || !userDocSnap.data().initialProfileCompleted) {
-                            showInitialProfileForm();
-                        } else {
-                            showAppContent();
-                        }
-                    } else {
-                        currentUserId = null;
-                        userEmail = null;
-                        document.getElementById('user-info').textContent = '';
-                        document.getElementById('auth-section').classList.remove('hidden');
-                        document.getElementById('app-content').classList.add('hidden');
-                        document.getElementById('initial-profile-section').classList.add('hidden');
-                    }
-                });
-            } catch (error) {
-                console.error("Fehler beim Initialisieren von Firebase:", error);
-                alert("Fehler beim Laden der Anwendung. Bitte versuchen Sie es später erneut.");
-            }
-        }
+const FINISH_LINE_CELLS = {
+  red: [56, 57, 58, 59], green: [16, 27, 38, 49], yellow: [64, 63, 62, 61], blue: [104, 93, 82, 71],
+};
 
-        window.firebase = {
-            auth,
-            db,
-            currentUserId,
-            signInWithEmailAndPassword,
-            createUserWithEmailAndPassword,
-            signOut,
-            doc,
-            setDoc,
-            collection,
-            query,
-            orderBy,
-            onSnapshot,
-            updateDoc,
-            appId // Make appId available globally for database path
-        };
+const EVENT_FIELDS = [PATH[5], PATH[15], PATH[25], PATH[35]];
+const EVENTS = [
+    { name: 'Flugzeugfeld', emoji: '✈️', effect: 'fly', description: 'Du fliegst 5 Felder weiter nach vorne! Steht dort jemand, wird er rausgeworfen.' },
+    { name: 'Tauschfeld', emoji: '🔄', effect: 'swap', description: 'Tausche deine Position mit einer beliebigen anderen Figur auf dem Feld.' },
+    { name: 'Polizeikontrolle', emoji: '👮', effect: 'police', description: 'Du wurdest geblitzt! Gehe 3 Felder zurück.' },
+    { name: 'Chaosfeld', emoji: '🎲', effect: 'chaos', description: 'Würfle nochmal! Gerade Zahl: vorwärts, ungerade Zahl: rückwärts.' },
+];
 
-        // initFirebase(); // Dieser Aufruf wurde entfernt und in DOMContentLoaded verschoben
-    </script>
-    <!-- Chosen Palette: Calm Neutrals with Green/Blue Accents -->
-    <!-- Application Structure Plan: The application now has three main states/sections to ensure user authentication and persistent data storage. Firstly, an **Authentication** section guides users through login or registration, securing individual data. Secondly, an **Initial Setup (Profile Questionnaire)** captures foundational user data (e.g., household size) upon first login, informing more accurate CO2 calculations. Thirdly, the **Daily Tracker & Dashboard** facilitates daily CO2 input and visualizes historical trends, leveraging Firestore for secure, per-user data persistence. This structured flow prioritizes user onboarding, data integrity, and continuous tracking. -->
-    <!-- Visualization & Content Choices: 
-        - Authentication Forms (HTML): Goal: User access control. Method: Standard input fields for email/password, submit buttons. Interaction: Call Firebase Auth functions (signInWithEmailAndPassword, createUserWithEmailAndPassword). Justification: Provides secure user access before data interaction.
-        - Initial Profile Questionnaire (HTML Form): Goal: Gather static user data. Method: Form with simple inputs for household size. Interaction: Submit to Firestore user document. Justification: Collects baseline for future personalized insights.
-        - Daily Questionnaire (HTML Form): Goal: Daily data gathering. Method: Multi-step form with sliders and checkboxes for mobile-friendly input. Interaction: Submit to Firestore as a new daily entry. Justification: Core daily data collection, directly updates user's persistent record.
-        - Daily Breakdown (Donut Chart): Goal: Compare daily CO2 impact by category. Method: Chart.js Donut Chart. Interaction: Hover for details. Justification: Provides immediate visual comparison of impact areas. Library: Chart.js.
-        - Historical Trend (Line Chart): Goal: Show change over time. Method: Chart.js Line Chart displaying total daily footprint. Interaction: Tooltips. Justification: Visualizes user progress and patterns, sourced directly from Firestore. Library: Chart.js.
-        - Personalized Tips (Dynamic Text): Goal: Provide actionable advice. Method: Text block dynamically updated based on the highest-emitting category of the day. Justification: Makes advice relevant and encourages behavior change based on collected data.
-    -->
-    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        .step { display: none; }
-        .step.active { display: block; }
-        .chart-container { position: relative; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto; height: 300px; max-height: 400px; }
-        @media (min-width: 768px) { .chart-container { height: 350px; } }
-        .loading-overlay { display: flex; justify-content: center; align-items: center; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255, 255, 255, 0.8); z-index: 1000; }
-        .spinner { border: 4px solid rgba(0, 0, 0, 0.1); border-left-color: #10B981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    </style>
-</head>
-<body class="bg-stone-100 text-stone-800">
+const QUIZ_FIELDS = [PATH[3], PATH[13], PATH[23], PATH[33]];
+const QUIZ_QUESTIONS = [
+    { question: 'Wie viele Liter Bier trinken die Deutschen durchschnittlich pro Kopf und Jahr?', answers: [{text: 'Ca. 100 Liter', isCorrect: true}, {text: 'Ca. 50 Liter', isCorrect: false}, {text: 'Ca. 150 Liter', isCorrect: false}] },
+    { question: 'Wie hoch ist der Eiffelturm in Paris (inkl. Antennen)?', answers: [{text: '286 Meter', isCorrect: false}, {text: '330 Meter', isCorrect: true}, {text: '381 Meter', isCorrect: false}] },
+    { question: 'Wie viele Herzen hat ein Oktopus?', answers: [{text: 'Eins', isCorrect: false}, {text: 'Zwei', isCorrect: false}, {text: 'Drei', isCorrect: true}] },
+    { question: 'Wie lange dauert es, bis das Licht von der Sonne die Erde erreicht?', answers: [{text: '8 Minuten', isCorrect: true}, {text: '30 Sekunden', isCorrect: false}, {text: '2 Stunden', isCorrect: false}] },
+    { question: 'Welches Land hat die meisten Inseln?', answers: [{text: 'Indonesien', isCorrect: false}, {text: 'Schweden', isCorrect: true}, {text: 'Kanada', isCorrect: false}] },
+    { question: 'Wie viele Punkte hat ein Marienkäfer mit sieben Punkten?', answers: [{text: 'Sieben', isCorrect: true}, {text: 'Zweiundzwanzig', isCorrect: false}, {text: 'Es variiert', isCorrect: false}]},
+    { question: 'Welcher Planet in unserem Sonnensystem ist der größte?', answers: [{text: 'Erde', isCorrect: false}, {text: 'Jupiter', isCorrect: true}, {text: 'Saturn', isCorrect: false}]},
+    { question: 'Wie viele Knochen hat ein erwachsener menschlicher Körper?', answers: [{text: '206', isCorrect: true}, {text: '300', isCorrect: false}, {text: '152', isCorrect: false}]},
+    { question: 'Was ist die Hauptstadt von Australien?', answers: [{text: 'Sydney', isCorrect: false}, {text: 'Melbourne', isCorrect: false}, {text: 'Canberra', isCorrect: true}]},
+    { question: 'Wie viele Tasten hat ein klassisches Klavier?', answers: [{text: '88', isCorrect: true}, {text: '76', isCorrect: false}, {text: '92', isCorrect: false}]},
+    { question: 'Welches Tier ist das schnellste Landtier?', answers: [{text: 'Löwe', isCorrect: false}, {text: 'Gepard', isCorrect: true}, {text: 'Antilope', isCorrect: false}]},
+    { question: 'In welchem Jahr fiel die Berliner Mauer?', answers: [{text: '1989', isCorrect: true}, {text: '1991', isCorrect: false}, {text: '1987', isCorrect: false}]},
+    { question: 'Wie viele Zähne hat ein erwachsener Mensch normalerweise?', answers: [{text: '28', isCorrect: false}, {text: '32', isCorrect: true}, {text: '36', isCorrect: false}]},
+    { question: 'Welcher Ozean ist der größte der Welt?', answers: [{text: 'Atlantischer Ozean', isCorrect: false}, {text: 'Indischer Ozean', isCorrect: false}, {text: 'Pazifischer Ozean', isCorrect: true}]},
+    { question: 'Wer schrieb "Harry Potter"?', answers: [{text: 'J.R.R. Tolkien', isCorrect: false}, {text: 'J.K. Rowling', isCorrect: true}, {text: 'George R.R. Martin', isCorrect: false}]},
+    { question: 'Wie viele Streifen hat die Flagge der USA?', answers: [{text: '13', isCorrect: true}, {text: '15', isCorrect: false}, {text: '12', isCorrect: false}]},
+    { question: 'Welches Element hat das chemische Symbol "Au"?', answers: [{text: 'Silber', isCorrect: false}, {text: 'Gold', isCorrect: true}, {text: 'Kupfer', isCorrect: false}]},
+    { question: 'Wie heißt der höchste Berg der Welt?', answers: [{text: 'K2', isCorrect: false}, {text: 'Mount Everest', isCorrect: true}, {text: 'Kangchendzönga', isCorrect: false}]},
+    { question: 'Welches Land ist für seine Tulpen berühmt?', answers: [{text: 'Belgien', isCorrect: false}, {text: 'Niederlande', isCorrect: true}, {text: 'Dänemark', isCorrect: false}]},
+    { question: 'Wie viele Spieler hat eine Fußballmannschaft auf dem Feld?', answers: [{text: '11', isCorrect: true}, {text: '10', isCorrect: false}, {text: '12', isCorrect: false}]},
+    { question: 'Wie viele Beine hat eine Spinne?', answers: [{text: '6', isCorrect: false}, {text: '8', isCorrect: true}, {text: '10', isCorrect: false}]},
+    { question: 'Was ist die am häufigsten gesprochene Sprache der Welt?', answers: [{text: 'Englisch', isCorrect: false}, {text: 'Spanisch', isCorrect: false}, {text: 'Mandarin-Chinesisch', isCorrect: true}]},
+    { question: 'In welchem Land wurde das Schachspiel erfunden?', answers: [{text: 'Indien', isCorrect: true}, {text: 'China', isCorrect: false}, {text: 'Ägypten', isCorrect: false}]},
+    { question: 'Wie viele Planeten gibt es in unserem Sonnensystem?', answers: [{text: '8', isCorrect: true}, {text: '9', isCorrect: false}, {text: '7', isCorrect: false}]},
+    { question: 'Welches ist das einzige Säugetier, das fliegen kann?', answers: [{text: 'Flughörnchen', isCorrect: false}, {text: 'Fledermaus', isCorrect: true}, {text: 'Pinguin', isCorrect: false}]},
+    { question: 'Wie viele Farben hat ein Regenbogen?', answers: [{text: '6', isCorrect: false}, {text: '7', isCorrect: true}, {text: '8', isCorrect: false}]},
+    { question: 'Welches Land hat die Form eines Stiefels?', answers: [{text: 'Griechenland', isCorrect: false}, {text: 'Italien', isCorrect: true}, {text: 'Spanien', isCorrect: false}]},
+    { question: 'Wer malte die Mona Lisa?', answers: [{text: 'Vincent van Gogh', isCorrect: false}, {text: 'Leonardo da Vinci', isCorrect: true}, {text: 'Pablo Picasso', isCorrect: false}]},
+    { question: 'Wie viele Kontinente gibt es?', answers: [{text: '5', isCorrect: false}, {text: '6', isCorrect: false}, {text: '7', isCorrect: true}]},
+    { question: 'Was ist die Währung von Japan?', answers: [{text: 'Yuan', isCorrect: false}, {text: 'Yen', isCorrect: true}, {text: 'Won', isCorrect: false}]},
+    { question: 'Wie viele Seiten hat ein Würfel?', answers: [{text: '6', isCorrect: true}, {text: '8', isCorrect: false}, {text: '4', isCorrect: false}]},
+    { question: 'Welches ist das längste Fluss der Welt?', answers: [{text: 'Amazonas', isCorrect: false}, {text: 'Nil', isCorrect: true}, {text: 'Jangtse', isCorrect: false}]},
+    { question: 'Wie viele Ringe hat das olympische Logo?', answers: [{text: '5', isCorrect: true}, {text: '4', isCorrect: false}, {text: '6', isCorrect: false}]},
+    { question: 'Wer war der erste Mensch im Weltraum?', answers: [{text: 'Neil Armstrong', isCorrect: false}, {text: 'Yuri Gagarin', isCorrect: true}, {text: 'Buzz Aldrin', isCorrect: false}]},
+    { question: 'Welches Gas atmen Pflanzen ein?', answers: [{text: 'Sauerstoff', isCorrect: false}, {text: 'Kohlendioxid', isCorrect: true}, {text: 'Stickstoff', isCorrect: false}]},
+    { question: 'Wie viele Bundesländer hat Deutschland?', answers: [{text: '15', isCorrect: false}, {text: '16', isCorrect: true}, {text: '17', isCorrect: false}]},
+    { question: 'Welches Tier ist auf dem Porsche-Logo abgebildet?', answers: [{text: 'Löwe', isCorrect: false}, {text: 'Pferd', isCorrect: true}, {text: 'Stier', isCorrect: false}]},
+    { question: 'Wie viele Sekunden hat eine Stunde?', answers: [{text: '3600', isCorrect: true}, {text: '60', isCorrect: false}, {text: '360', isCorrect: false}]},
+    { question: 'Welche Farbe hat eine "Black Box" in einem Flugzeug?', answers: [{text: 'Schwarz', isCorrect: false}, {text: 'Orange', isCorrect: true}, {text: 'Rot', isCorrect: false}]},
+    { question: 'Wie viele Monde hat der Mars?', answers: [{text: 'Einen', isCorrect: false}, {text: 'Zwei', isCorrect: true}, {text: 'Keinen', isCorrect: false}]},
+    { question: 'Welches ist das härteste bekannte natürliche Material?', answers: [{text: 'Stahl', isCorrect: false}, {text: 'Diamant', isCorrect: true}, {text: 'Titan', isCorrect: false}]},
+    { question: 'Wie viele Oscars gewann der Film "Titanic"?', answers: [{text: '9', isCorrect: false}, {text: '11', isCorrect: true}, {text: '13', isCorrect: false}]},
+    { question: 'Welches Land ist das bevölkerungsreichste der Welt?', answers: [{text: 'China', isCorrect: false}, {text: 'Indien', isCorrect: true}, {text: 'USA', isCorrect: false}]},
+    { question: 'Wie viele Ecken hat ein Fünfeck?', answers: [{text: '5', isCorrect: true}, {text: '6', isCorrect: false}, {text: '4', isCorrect: false}]},
+    { question: 'Welcher Komponist war taub?', answers: [{text: 'Mozart', isCorrect: false}, {text: 'Beethoven', isCorrect: true}, {text: 'Bach', isCorrect: false}]},
+    { question: 'Wie viele Pyramiden von Gizeh gibt es?', answers: [{text: '3', isCorrect: true}, {text: '4', isCorrect: false}, {text: '5', isCorrect: false}]},
+    { question: 'Welches Meer hat den höchsten Salzgehalt?', answers: [{text: 'Mittelmeer', isCorrect: false}, {text: 'Totes Meer', isCorrect: true}, {text: 'Rotes Meer', isCorrect: false}]},
+    { question: 'Wie viele Bände hat "Der Herr der Ringe"?', answers: [{text: 'Einen', isCorrect: false}, {text: 'Drei', isCorrect: true}, {text: 'Sieben', isCorrect: false}]},
+    { question: 'Welche Stadt ist als "Die Stadt der Liebe" bekannt?', answers: [{text: 'Rom', isCorrect: false}, {text: 'Paris', isCorrect: true}, {text: 'Venedig', isCorrect: false}]},
+];
 
-    <div class="loading-overlay" id="loading-overlay">
-        <div class="spinner"></div>
-        <p class="ml-4 text-emerald-700 font-semibold">Wird geladen...</p>
+// --- Animations-Hook ---
+const useAnimation = () => {
+    const [animatedPawn, setAnimatedPawn] = useState(null);
+    const triggerCaptureAnimation = (player, index) => {
+        setAnimatedPawn({ player, index, state: 'captured' });
+        setTimeout(() => setAnimatedPawn(null), 500);
+    };
+    return { animatedPawn, triggerCaptureAnimation };
+};
+
+// --- Komponenten ---
+
+const Pawn = ({ color, isHighlighted, animationState, isSelectable }) => {
+    const animationClass = animationState === 'captured' ? 'animate-shake' : '';
+    const highlightStyle = isHighlighted || isSelectable ? { filter: 'drop-shadow(0 0 6px #fff)' } : {};
+    const selectableStyle = isSelectable ? { filter: 'drop-shadow(0 0 8px #a855f7)' } : {};
+    // BUGFIX: Use a dark stroke for the yellow pawn's head for visibility
+    const headStrokeColor = color.toLowerCase() === 'yellow' ? '#4b5563' : '#ffffff';
+
+    return (
+      <div className={`w-full h-full transition-all duration-300 ${isHighlighted ? 'scale-110' : ''} ${animationClass}`} style={{...highlightStyle, ...selectableStyle}}>
+        <svg viewBox="0 0 100 120" className="w-full h-full">
+            <defs>
+                <radialGradient id={`grad-${color}`} cx="50%" cy="40%" r="50%" fx="50%" fy="30%">
+                    <stop offset="0%" style={{stopColor: '#ffffff', stopOpacity: 0.7}} />
+                    <stop offset="100%" style={{stopColor: color, stopOpacity: 1}} />
+                </radialGradient>
+                <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feDropShadow dx="2" dy="4" stdDeviation="2.5" floodColor="#000" floodOpacity="0.3"/>
+                </filter>
+            </defs>
+            <g style={{filter: 'url(#shadow)'}}>
+                {/* Body of the pawn, adjusted for the new viewbox */}
+                <path d="M 50,118 C 20,118 10,100 10,100 L 25,60 C 25,60 15,40 50,15 C 85,40 75,60 75,60 L 90,100 C 90,100 80,118 50,118 Z" fill={`url(#grad-${color})`} stroke="#000" strokeWidth="2"/>
+                {/* Head of the pawn */}
+                <circle cx="50" cy="35" r="18" fill={color} stroke={headStrokeColor} strokeWidth="3" />
+            </g>
+        </svg>
+      </div>
+    );
+};
+
+const Cell = ({ type, color, children, isEvent, isQuiz }) => {
+  const baseClasses = "w-9 h-9 md:w-10 md:h-10 rounded-md transition-colors duration-200 relative";
+  let styleClasses = '';
+  switch (type) {
+    case 'path': styleClasses = 'bg-stone-200 shadow-inner'; break;
+    case 'start_cell': styleClasses = `bg-gradient-to-br from-${color}-300 to-${color}-400 shadow-inner`; break;
+    case 'start_area': styleClasses = `bg-${color}-100 border-2 border-dashed border-${color}-300`; break;
+    case 'finish': styleClasses = `bg-gradient-to-br from-${color}-200 to-${color}-300 shadow-inner`; break;
+    case 'empty': styleClasses = 'bg-transparent pointer-events-none'; break;
+    default: styleClasses = 'bg-gray-100';
+  }
+
+  return (
+    <div className={`${baseClasses} ${styleClasses}`}>
+      {isEvent && <LucideStar className="absolute text-yellow-400 opacity-80" style={{filter: 'drop-shadow(0 0 3px #000)'}} size={24} />}
+      {isQuiz && <LucideHelpCircle className="absolute text-purple-400 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} size={24} />}
+      <div className="relative z-10 w-full h-full">{children}</div>
     </div>
+  );
+};
 
-    <div class="container mx-auto p-4 md:p-8 max-w-4xl hidden" id="main-content">
-        <header class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-emerald-700">Dein Täglicher CO2-Fußabdruck</h1>
-            <p class="text-stone-600 mt-2">Erfasse deine täglichen Aktivitäten und lerne, wie du deinen ökologischen Fußabdruck reduzieren kannst.</p>
-            <div id="user-info" class="text-sm text-stone-500 mt-2"></div>
-            <button id="logout-btn" class="hidden bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition mt-4">Abmelden</button>
-        </header>
+const Dice = ({ value, onRoll, isRolling, canRoll }) => (
+  <button onClick={onRoll} disabled={!canRoll || isRolling} className={`w-24 h-24 bg-white rounded-2xl shadow-2xl flex items-center justify-center text-6xl font-bold text-gray-800 transform transition-transform duration-300 ${canRoll ? 'hover:scale-110 hover:rotate-6' : 'opacity-50 cursor-not-allowed'} ${isRolling ? 'animate-spin' : ''}`}>
+    {isRolling ? <LucideDices className="animate-ping" /> : value}
+  </button>
+);
 
-        <main id="app">
-            <!-- Authentication Section -->
-            <section id="auth-section" class="bg-white p-6 rounded-lg shadow-md max-w-md mx-auto">
-                <h2 class="text-2xl font-semibold mb-4 text-center">Anmelden oder Registrieren</h2>
-                <form id="auth-form" class="space-y-4">
-                    <div>
-                        <label for="auth-email" class="block mb-1">E-Mail:</label>
-                        <input type="email" id="auth-email" class="w-full p-2 border border-stone-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500" required>
-                    </div>
-                    <div>
-                        <label for="auth-password" class="block mb-1">Passwort:</label>
-                        <input type="password" id="auth-password" class="w-full p-2 border border-stone-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500" required>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <button type="button" id="login-btn" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Anmelden</button>
-                        <button type="button" id="register-btn" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">Registrieren</button>
-                    </div>
-                    <p id="auth-error-message" class="text-red-500 text-sm mt-2 hidden"></p>
-                </form>
-            </section>
+const EventSlotMachine = ({ onFinish }) => {
+    const [isSpinning, setIsSpinning] = useState(true);
+    const [finalEvent, setFinalEvent] = useState(null);
+    const reelRef = useRef(null);
+    const repeatedEvents = useRef([...EVENTS, ...EVENTS, ...EVENTS, ...EVENTS, ...EVENTS]).current;
 
-            <!-- Initial Profile Section (New Users) -->
-            <section id="initial-profile-section" class="hidden bg-white p-6 rounded-lg shadow-md">
-                <h2 class="text-2xl font-semibold mb-4 text-center text-emerald-700">Dein Profil einrichten</h2>
-                <p class="text-stone-600 text-center mb-6">Bitte beantworte diese Fragen einmalig für eine bessere Berechnung deines Fußabdrucks.</p>
-                <form id="initial-profile-form" class="space-y-4">
-                    <div>
-                        <label for="household-size" class="block mb-1">Wie viele Personen leben in deinem Haushalt?</label>
-                        <input type="number" id="household-size" min="1" value="1" class="w-full p-2 border border-stone-300 rounded-md">
-                    </div>
-                    <div>
-                        <label for="dwelling-type" class="block mb-1">Art der Wohnung:</label>
-                        <select id="dwelling-type" class="w-full p-2 border border-stone-300 rounded-md">
-                            <option value="apartment">Wohnung</option>
-                            <option value="house">Haus</option>
-                        </select>
-                    </div>
-                    <div class="text-center">
-                        <button type="submit" class="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700 transition text-lg">Profil speichern</button>
-                    </div>
-                </form>
-            </section>
+    const stopSpinning = () => {
+        if (!isSpinning) return;
+        setIsSpinning(false);
+        const eventIndex = Math.floor(Math.random() * EVENTS.length);
+        const chosenEvent = EVENTS[eventIndex];
+        const elementHeight = 80;
+        const targetSetIndex = 2; 
+        const finalElementIndex = (targetSetIndex * EVENTS.length) + eventIndex;
+        const finalPosition = finalElementIndex * elementHeight;
+        if (reelRef.current) {
+            reelRef.current.style.transition = 'transform 3s cubic-bezier(0.25, 1, 0.5, 1)';
+            reelRef.current.style.transform = `translateY(-${finalPosition}px)`;
+        }
+        setTimeout(() => { setFinalEvent(chosenEvent); }, 3000);
+    };
+    
+    useEffect(() => {
+        if(finalEvent) { setTimeout(() => onFinish(finalEvent), 2500); }
+    }, [finalEvent, onFinish]);
 
-            <!-- Main App Content (Questionnaire & Dashboard) -->
-            <div id="app-content" class="hidden">
-                <!-- Questionnaire Section -->
-                <section id="questionnaire" class="bg-white p-6 rounded-lg shadow-md">
-                    <h2 class="text-2xl font-semibold mb-4 text-center">Heutige Daten eingeben</h2>
-                    <div id="welcome-message" class="text-center mb-4">
-                        <p>Fülle den Fragebogen aus, um deinen CO2-Ausstoß für heute zu berechnen. Es dauert nur eine Minute!</p>
-                    </div>
-
-                    <form id="co2-form">
-                        <!-- Step 1: Mobilität -->
-                        <div id="step-1" class="step active">
-                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">1. Mobilität</h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <label for="car-km" class="block mb-1">Kilometer mit dem Verbrenner-Auto:</label>
-                                    <input type="range" id="car-km" min="0" max="200" value="0" class="w-full">
-                                    <span class="text-sm text-stone-500"><span id="car-km-value">0</span> km</span>
-                                </div>
-                                <div>
-                                    <label for="public-transport-km" class="block mb-1">Kilometer mit öffentlichen Verkehrsmitteln (Bus/Bahn):</label>
-                                    <input type="range" id="public-transport-km" min="0" max="200" value="0" class="w-full">
-                                    <span class="text-sm text-stone-500"><span id="public-transport-km-value">0</span> km</span>
-                                </div>
-                            </div>
-                            <div class="text-right mt-6">
-                                <button type="button" onclick="nextStep(2)" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Weiter</button>
-                            </div>
-                        </div>
-
-                        <!-- Step 2: Ernährung -->
-                        <div id="step-2" class="step">
-                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">2. Ernährung</h3>
-                            <div class="space-y-4">
-                                <p>Welche der folgenden Lebensmittel hast du heute gegessen?</p>
-                                <div class="flex flex-col space-y-2">
-                                    <label class="flex items-center"><input type="checkbox" name="food" value="beef" class="mr-2"> Rindfleisch</label>
-                                    <label class="flex items-center"><input type="checkbox" name="food" value="pork_poultry" class="mr-2"> Schwein/Geflügel</label>
-                                    <label class="flex items-center"><input type="checkbox" name="food" value="dairy" class="mr-2"> Viele Milchprodukte</label>
-                                    <label class="flex items-center"><input type="checkbox" name="food" value="vegetarian" class="mr-2"> Überwiegend vegetarisch/vegan</label>
-                                </div>
-                            </div>
-                            <div class="flex justify-between mt-6">
-                                <button type="button" onclick="prevStep(1)" class="bg-stone-200 text-stone-700 px-6 py-2 rounded-lg hover:bg-stone-300 transition">Zurück</button>
-                                <button type="button" onclick="nextStep(3)" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Weiter</button>
-                            </div>
-                        </div>
-
-                        <!-- Step 3: Energie zu Hause -->
-                        <div id="step-3" class="step">
-                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">3. Energie zu Hause</h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <label for="shower-min" class="block mb-1">Minuten heiß geduscht:</label>
-                                    <input type="range" id="shower-min" min="0" max="30" value="5" class="w-full">
-                                    <span class="text-sm text-stone-500"><span id="shower-min-value">5</span> min</span>
-                                </div>
-                                <div>
-                                    <p class="mb-1">Heizung stark genutzt?</p>
-                                    <label class="mr-4"><input type="radio" name="heating" value="yes"> Ja</label>
-                                    <label><input type="radio" name="heating" value="no" checked> Nein</label>
-                                </div>
-                            </div>
-                            <div class="flex justify-between mt-6">
-                                <button type="button" onclick="prevStep(2)" class="bg-stone-200 text-stone-700 px-6 py-2 rounded-lg hover:bg-stone-300 transition">Zurück</button>
-                                <button type="button" onclick="nextStep(4)" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition">Weiter</button>
-                            </div>
-                        </div>
-
-                        <!-- Step 4: Konsum -->
-                        <div id="step-4" class="step">
-                            <h3 class="text-xl font-semibold mb-4 text-emerald-600 border-b pb-2">4. Konsum</h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <p class="mb-1">Neue Produkte gekauft (Kleidung, Elektronik etc.)?</p>
-                                    <label class="mr-4"><input type="radio" name="shopping" value="yes"> Ja</label>
-                                    <label><input type="radio" name="shopping" value="no" checked> Nein</label>
-                                </div>
-                            </div>
-                            <div class="flex justify-between mt-6">
-                                <button type="button" onclick="prevStep(3)" class="bg-stone-200 text-stone-700 px-6 py-2 rounded-lg hover:bg-stone-300 transition">Zurück</button>
-                                <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">Berechnen</button>
-                            </div>
-                        </div>
-                    </form>
-                </section>
-
-                <!-- Dashboard Section -->
-                <section id="dashboard" class="hidden mt-8">
-                    <div class="text-center mb-8">
-                        <h2 class="text-3xl font-bold">Dein Dashboard</h2>
-                        <p class="text-stone-600">Hier siehst du deine Ergebnisse und Fortschritte.</p>
-                    </div>
-                    
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <div class="bg-white p-6 rounded-lg shadow-md flex flex-col justify-center items-center text-center">
-                            <h3 class="text-xl font-semibold mb-2">Dein heutiger Fußabdruck</h3>
-                            <p class="text-5xl font-bold text-emerald-600"><span id="total-co2">0</span> kg CO₂e</p>
-                            <p class="text-stone-500 mt-2">Das entspricht etwa der Emission einer 🚗-Fahrt von <span id="co2-equivalent">0</span> km.</p>
-                        </div>
-                        <div class="bg-white p-6 rounded-lg shadow-md">
-                            <h3 class="text-xl font-semibold mb-4 text-center">Aufschlüsselung nach Kategorie</h3>
-                            <div class="chart-container">
-                                <canvas id="daily-breakdown-chart"></canvas>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="bg-white p-6 rounded-lg shadow-md mt-8">
-                        <h3 class="text-xl font-semibold mb-4 text-center">Dein Verlauf (letzte 7 Tage)</h3>
-                        <div class="chart-container" style="height: 350px;">
-                            <canvas id="historical-trend-chart"></canvas>
-                        </div>
-                    </div>
-                    
-                    <div class="bg-white p-6 rounded-lg shadow-md mt-8">
-                        <h3 class="text-xl font-semibold mb-2">💡 Dein persönlicher Tipp</h3>
-                        <p id="personalized-tip" class="text-stone-700">Fülle den Fragebogen aus, um einen Tipp zu erhalten, der auf deinen größten Einflussbereich zugeschnitten ist.</p>
-                    </div>
-
-                    <div class="text-center mt-8">
-                        <button onclick="showQuestionnaire()" class="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700 transition text-lg">Neuen Tag eintragen</button>
-                    </div>
-                </section>
+    return (
+        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+            <div className="bg-gradient-to-b from-gray-700 to-gray-900 rounded-2xl shadow-2xl p-6 text-center max-w-sm w-full border-4 border-yellow-400">
+                <h2 className="text-3xl font-bold text-white mb-4">Ereignisfeld!</h2>
+                <div className="h-20 w-full bg-gray-800 rounded-lg overflow-hidden relative border-2 border-gray-500 my-4">
+                    <div ref={reelRef} className={`flex flex-col items-center justify-center ${isSpinning ? 'animate-slot-machine' : ''}`}>{repeatedEvents.map((event, i) => (<div key={i} className="h-20 flex items-center justify-center text-6xl">{event.emoji}</div>))}</div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-gray-800 via-transparent to-gray-800"></div>
+                    <div className="absolute top-1/2 left-0 w-full h-px -translate-y-1/2 bg-red-500 opacity-50"></div>
+                </div>
+                {finalEvent ? (<div className="h-24 flex flex-col items-center justify-center"><p className="text-2xl font-bold text-yellow-400 animate-pulse">{finalEvent.name}</p><p className="text-white mt-2">{finalEvent.description}</p></div>) : (<button onClick={stopSpinning} disabled={!isSpinning} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-8 rounded-full text-2xl transition-all transform hover:scale-105 disabled:opacity-50">STOP</button>)}
             </div>
-        </main>
-    </div>
+        </div>
+    );
+};
 
-    <script type="module">
-        let currentStep = 1;
-        let dailyBreakdownChart;
-        let historicalTrendChart;
+const QuizModal = ({ question, onAnswer }) => {
+    const [answered, setAnswered] = useState(false);
+    const [result, setResult] = useState(null); // 'correct' or 'incorrect'
 
-        const emissionFactors = {
-            car_km: 0.15, // kg CO2e per km
-            public_transport_km: 0.04, // kg CO2e per km
-            beef: 4.0, // kg CO2e per serving
-            pork_poultry: 1.2, // kg CO2e per serving
-            dairy: 0.8, // kg CO2e for high consumption
-            vegetarian: -0.5, // Bonus for being veggie
-            shower_min: 0.1, // kg CO2e per minute
-            heating_yes: 3.0, // kg CO2e for a day of heavy heating
-            shopping_yes: 2.0, // kg CO2e for new item (average)
-        };
-
-        const authErrorMessage = document.getElementById('auth-error-message');
-        const loadingOverlay = document.getElementById('loading-overlay');
-        const mainContent = document.getElementById('main-content');
-
-        function showLoading() { loadingOverlay.classList.remove('hidden'); mainContent.classList.add('hidden'); }
-        function hideLoading() { loadingOverlay.classList.add('hidden'); mainContent.classList.remove('hidden'); }
-
-        function showStep(step) {
-            document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
-            document.getElementById(`step-${step}`).classList.add('active');
-            currentStep = step;
+    const handleAnswerClick = (answer) => {
+        if (answered) return;
+        setAnswered(true);
+        if (answer.isCorrect) {
+            setResult('correct');
+        } else {
+            setResult('incorrect');
         }
+        setTimeout(() => onAnswer(answer.isCorrect), 2000);
+    };
 
-        function nextStep(step) {
-            showStep(step);
+    return (
+        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl p-8 text-center max-w-md w-full">
+                <LucideHelpCircle className="mx-auto text-purple-500 mb-4" size={48} />
+                <h2 className="text-2xl font-bold text-gray-800 mb-4">Schätzfrage!</h2>
+                <p className="text-lg text-gray-600 mb-6 min-h-[56px]">{question.question}</p>
+                <div className="space-y-3">
+                    {question.answers.map((ans, i) => (
+                        <button 
+                            key={i} 
+                            onClick={() => handleAnswerClick(ans)}
+                            disabled={answered}
+                            className={`w-full p-4 rounded-lg font-semibold text-lg transition-all duration-300
+                                ${!answered ? 'bg-gray-200 hover:bg-purple-200' : ''}
+                                ${answered && ans.isCorrect ? 'bg-green-500 text-white scale-105' : ''}
+                                ${answered && !ans.isCorrect ? 'bg-red-500 text-white' : ''}
+                                ${answered ? 'opacity-70' : ''}
+                            `}
+                        >
+                            {ans.text}
+                        </button>
+                    ))}
+                </div>
+                {result === 'correct' && <p className="mt-4 text-xl font-bold text-green-600 animate-pulse">Richtig! Du gehst 4 Felder vor.</p>}
+                {result === 'incorrect' && <p className="mt-4 text-xl font-bold text-red-600 animate-pulse">Falsch! Du gehst 2 Felder zurück.</p>}
+            </div>
+        </div>
+    );
+};
+
+const LudoGame = ({ onBack, players: playerConfig }) => {
+  if (!playerConfig || playerConfig.length === 0) return null;
+
+  const [pawns, setPawns] = useState(() => initializePawnState());
+  const [diceValue, setDiceValue] = useState(0);
+  const [activePlayers, setActivePlayers] = useState(() => playerConfig.map(p => p.color));
+  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
+  const [isRolling, setIsRolling] = useState(false);
+  const [message, setMessage] = useState(() => `${playerConfig[0].name}, bitte würfeln!`);
+  const [winner, setWinner] = useState(null);
+  const [rollAttempts, setRollAttempts] = useState(0);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const { animatedPawn, triggerCaptureAnimation } = useAnimation();
+  
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [showQuizModal, setShowQuizModal] = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState(null);
+  const [eventPawn, setEventPawn] = useState(null);
+  const [gameState, setGameState] = useState('normal');
+
+  const currentPlayerColor = activePlayers[currentPlayerIndex];
+  const currentPlayerName = playerConfig.find(p => p.color === currentPlayerColor).name;
+
+  function initializePawnState() {
+    const state = {};
+    playerConfig.forEach(({ color }) => {
+      state[color] = START_POSITIONS[color].map(pos => ({ position: pos, state: 'home' }));
+    });
+    return state;
+  }
+
+  const nextPlayer = () => {
+    const nextIndex = (currentPlayerIndex + 1) % activePlayers.length;
+    setCurrentPlayerIndex(nextIndex);
+    setDiceValue(0);
+    setRollAttempts(0);
+    const nextPlayerName = playerConfig.find(p => p.color === activePlayers[nextIndex]).name;
+    setMessage(`${nextPlayerName}, bitte würfeln!`);
+  };
+
+  const handleRollDice = () => {
+    if (gameState !== 'awaitingChaosRoll' && (winner || isRolling || diceValue !== 0 || isAnimating || showEventModal || showQuizModal)) return;
+    if (gameState === 'awaitingChaosRoll' && isRolling) return;
+
+    setIsRolling(true);
+    setMessage('');
+    setTimeout(() => {
+      const roll = Math.floor(Math.random() * 6) + 1;
+      setIsRolling(false);
+
+      if (gameState === 'awaitingChaosRoll') {
+          setDiceValue(roll);
+          setGameState('chaosMovePending');
+          setMessage('Wähle die Chaos-Figur zum Ziehen.');
+          return;
+      }
+      
+      setDiceValue(roll);
+      
+      const allPawnsHome = pawns[currentPlayerColor].every(p => p.state === 'home');
+      const newAttempts = rollAttempts + 1;
+
+      if (allPawnsHome && roll !== 6) {
+        if (newAttempts < 3) {
+          setRollAttempts(newAttempts);
+          setMessage(`Versuch ${newAttempts}/3. Würfle nochmal!`);
+          setDiceValue(0);
+        } else {
+          setMessage(`${currentPlayerName} konnte nicht rauskommen.`);
+          setTimeout(nextPlayer, 1500);
         }
+        return;
+      }
+      
+      const movablePawns = getMovablePawns(currentPlayerColor, roll);
+      if (movablePawns.length === 0) {
+        setMessage(`${currentPlayerName} kann nicht ziehen.`);
+        setTimeout(() => (roll !== 6) ? nextPlayer() : (setMessage("6 gewürfelt, aber kein Zug möglich. Würfle nochmal!"), setDiceValue(0)), 1500);
+      } else {
+        setMessage("Wähle eine Figur zum Ziehen.");
+      }
+    }, 1000);
+  };
 
-        function prevStep(step) {
-            showStep(step);
+  const getMovablePawns = (player, roll) => {
+    if (gameState === 'chaosMovePending') {
+        if (eventPawn && eventPawn.player === player) {
+            return [pawns[player][eventPawn.index]].map((p, i) => ({...p, index: eventPawn.index}));
         }
-
-        function updateSliderValue(sliderId, valueId) {
-            const slider = document.getElementById(sliderId);
-            const valueSpan = document.getElementById(valueId);
-            if (slider && valueSpan) {
-                slider.addEventListener('input', () => {
-                    valueSpan.textContent = slider.value;
-                });
-            }
-        }
-
-        updateSliderValue('car-km', 'car-km-value');
-        updateSliderValue('public-transport-km', 'public-transport-km-value');
-        updateSliderValue('shower-min', 'shower-min-value');
-        
-        // --- Authentication Logic ---
-        document.getElementById('login-btn').addEventListener('click', async () => {
-            const email = document.getElementById('auth-email').value;
-            const password = document.getElementById('auth-password').value;
-            authErrorMessage.classList.add('hidden');
-            showLoading();
-            try {
-                await firebase.signInWithEmailAndPassword(firebase.auth, email, password);
-            } catch (error) {
-                console.error("Login Fehler:", error);
-                authErrorMessage.textContent = "Fehler beim Anmelden: " + error.message;
-                authErrorMessage.classList.remove('hidden');
-            } finally {
-                hideLoading();
-            }
-        });
-
-        document.getElementById('register-btn').addEventListener('click', async () => {
-            const email = document.getElementById('auth-email').value;
-            const password = document.getElementById('auth-password').value;
-            authErrorMessage.classList.add('hidden');
-            showLoading();
-            try {
-                await firebase.createUserWithEmailAndPassword(firebase.auth, email, password);
-                // After successful registration, save initial profile status
-                const userDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.auth.currentUser.uid);
-                await firebase.setDoc(userDocRef, { email: email, initialProfileCompleted: false }, { merge: true });
-            } catch (error) {
-                console.error("Registrierungs Fehler:", error);
-                authErrorMessage.textContent = "Fehler bei der Registrierung: " + error.message;
-                authErrorMessage.classList.remove('hidden');
-            } finally {
-                hideLoading();
-            }
-        });
-
-        document.getElementById('logout-btn').addEventListener('click', async () => {
-            showLoading();
-            try {
-                await firebase.signOut(firebase.auth);
-            } catch (error) {
-                console.error("Logout Fehler:", error);
-                alert("Fehler beim Abmelden.");
-            } finally {
-                hideLoading();
-            }
-        });
-
-        // --- Initial Profile Logic ---
-        function showInitialProfileForm() {
-            document.getElementById('app-content').classList.add('hidden');
-            document.getElementById('auth-section').classList.add('hidden');
-            document.getElementById('initial-profile-section').classList.remove('hidden');
-            document.getElementById('logout-btn').classList.remove('hidden'); // Show logout even during initial setup
-        }
-
-        document.getElementById('initial-profile-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const householdSize = document.getElementById('household-size').value;
-            const dwellingType = document.getElementById('dwelling-type').value;
-
-            showLoading();
-            try {
-                const userDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId);
-                await firebase.updateDoc(userDocRef, {
-                    householdSize: parseInt(householdSize),
-                    dwellingType: dwellingType,
-                    initialProfileCompleted: true
-                });
-                showAppContent(); // Proceed to main app after initial profile
-            } catch (error) {
-                console.error("Fehler beim Speichern des Profils:", error);
-                alert("Fehler beim Speichern deines Profils. Bitte versuche es erneut.");
-            } finally {
-                hideLoading();
-            }
-        });
-
-        function showAppContent() {
-            document.getElementById('auth-section').classList.add('hidden');
-            document.getElementById('initial-profile-section').classList.add('hidden');
-            document.getElementById('app-content').classList.remove('hidden');
-            document.getElementById('logout-btn').classList.remove('hidden'); // Ensure logout is visible
-            checkTodayEntryAndDisplay();
-        }
-
-        // --- Daily CO2 Calculation and Firestore Saving ---
-        document.getElementById('co2-form').addEventListener('submit', function(e) {
-            e.preventDefault();
-            calculateAndSaveCO2();
-        });
-
-        async function calculateAndSaveCO2() {
-            if (!firebase.currentUserId) {
-                alert("Bitte melden Sie sich an, um Daten zu speichern.");
-                return;
-            }
-
-            const scores = {
-                mobility: 0,
-                nutrition: 0,
-                energy: 0,
-                consumption: 0,
-            };
-
-            scores.mobility += parseFloat(document.getElementById('car-km').value) * emissionFactors.car_km;
-            scores.mobility += parseFloat(document.getElementById('public-transport-km').value) * emissionFactors.public_transport_km;
-
-            document.querySelectorAll('input[name="food"]:checked').forEach(el => {
-                scores.nutrition += emissionFactors[el.value] || 0;
-            });
-            if (scores.nutrition < 0) scores.nutrition = 0;
-
-            scores.energy += parseFloat(document.getElementById('shower-min').value) * emissionFactors.shower_min;
-            if (document.querySelector('input[name="heating"]:checked').value === 'yes') {
-                scores.energy += emissionFactors.heating_yes;
-            }
-
-            if (document.querySelector('input[name="shopping"]:checked').value === 'yes') {
-                scores.consumption += emissionFactors.shopping_yes;
-            }
-
-            const totalCO2 = Object.values(scores).reduce((sum, val) => sum + val, 0);
-            const today = new Date().toISOString().split('T')[0];
-
-            showLoading();
-            try {
-                const dailyDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId, 'daily_entries', today);
-                await firebase.setDoc(dailyDocRef, {
-                    date: today,
-                    scores: scores,
-                    total: totalCO2
-                });
-                showDashboard();
-            }
-            catch (error) {
-                console.error("Fehler beim Speichern der Tagesdaten:", error);
-                alert("Fehler beim Speichern Ihrer Daten. Bitte versuchen Sie es erneut.");
-            } finally {
-                hideLoading();
+        return [];
+    }
+    const playerPawns = pawns[player];
+    const startCell = PATH_START_CELL[player];
+    const pawnOnStart = playerPawns.find(p => p.position === startCell && p.state === 'path');
+    if (pawnOnStart) return [{ ...pawnOnStart, index: playerPawns.indexOf(pawnOnStart) }];
+    const pawnsAtHome = playerPawns.filter(p => p.state === 'home');
+    if (roll === 6 && pawnsAtHome.length > 0) return pawnsAtHome.map(pawn => ({...pawn, index: playerPawns.indexOf(pawn)}));
+    return playerPawns.map((pawn, index) => {
+        if (pawn.state === 'home') return null;
+        if (pawn.state === 'finish') {
+            const currentFinishIdx = FINISH_LINE_CELLS[player].indexOf(pawn.position);
+            const newFinishIdx = currentFinishIdx + roll;
+            if (newFinishIdx >= FINISH_LINE_CELLS[player].length) return null;
+            for (let i = currentFinishIdx + 1; i <= newFinishIdx; i++) {
+                if (playerPawns.some(p => p.position === FINISH_LINE_CELLS[player][i])) return null;
             }
         }
+        return { ...pawn, index };
+    }).filter(p => p !== null);
+  };
 
-        function showDashboard() {
-            document.getElementById('questionnaire').classList.add('hidden');
-            document.getElementById('dashboard').classList.remove('hidden');
-            updateDashboard();
-        }
-
-        window.showQuestionnaire = function() { // Make global for onclick
-            document.getElementById('dashboard').classList.add('hidden');
-            document.getElementById('questionnaire').classList.remove('hidden');
-            document.getElementById('co2-form').reset();
-            showStep(1);
-            // Reset slider values display
-            document.getElementById('car-km-value').textContent = '0';
-            document.getElementById('public-transport-km-value').textContent = '0';
-            document.getElementById('shower-min-value').textContent = '5';
-        }
-
-        async function updateDashboard() {
-            if (!firebase.currentUserId) return;
-
-            showLoading();
-            try {
-                const dailyEntriesColRef = firebase.collection(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId, 'daily_entries');
-                const q = firebase.query(dailyEntriesColRef); // Removed orderBy as per instructions
-                
-                // Using onSnapshot for real-time updates and initial fetch
-                firebase.onSnapshot(q, (snapshot) => {
-                    const history = [];
-                    snapshot.forEach(doc => {
-                        history.push(doc.data());
-                    });
-                    history.sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort client-side
-                    
-                    if (history.length === 0) {
-                        document.getElementById('total-co2').textContent = '0.00';
-                        document.getElementById('co2-equivalent').textContent = '0';
-                        renderDailyBreakdownChart({ mobility: 0, nutrition: 0, energy: 0, consumption: 0 });
-                        renderHistoricalTrendChart([]);
-                        document.getElementById('personalized-tip').textContent = 'Fülle den Fragebogen aus, um einen Tipp zu erhalten!';
-                        return;
-                    }
-
-                    const todayData = history[history.length - 1];
-                    const totalCO2 = todayData.total;
-                    
-                    document.getElementById('total-co2').textContent = totalCO2.toFixed(2);
-                    document.getElementById('co2-equivalent').textContent = (totalCO2 / emissionFactors.car_km).toFixed(0);
-
-                    renderDailyBreakdownChart(todayData.scores);
-                    renderHistoricalTrendChart(history);
-                    updatePersonalizedTip(todayData.scores);
-                    hideLoading(); // Hide loading only after all charts and data are updated
-                }, (error) => {
-                    console.error("Fehler beim Laden der historischen Daten:", error);
-                    alert("Fehler beim Laden Ihrer Daten.");
-                    hideLoading();
-                });
-
-            } catch (error) {
-                console.error("Fehler beim Laden des Dashboards:", error);
-                alert("Fehler beim Laden des Dashboards. Bitte versuchen Sie es erneut.");
-            } finally {
-                hideLoading();
-            }
-        }
-
-        function renderDailyBreakdownChart(scores) {
-            const ctx = document.getElementById('daily-breakdown-chart').getContext('2d');
-            if (dailyBreakdownChart) {
-                dailyBreakdownChart.destroy();
-            }
-            dailyBreakdownChart = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Mobilität', 'Ernährung', 'Energie', 'Konsum'],
-                    datasets: [{
-                        data: [scores.mobility, scores.nutrition, scores.energy, scores.consumption],
-                        backgroundColor: ['#34D399', '#FBBF24', '#60A5FA', '#F87171'],
-                        borderColor: '#F5F5F4',
-                        borderWidth: 4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { position: 'bottom' },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    let label = context.label || '';
-                                    if (label) {
-                                        label += ': ';
-                                    }
-                                    if (context.parsed !== null) {
-                                        label += context.parsed.toFixed(2) + ' kg CO₂e';
-                                    }
-                                    return label;
-                                }
-                            }
-                        }
-                    }
+  const performCapture = async (newPawns, landingPosition, currentPlayer) => {
+    for (const otherColor of activePlayers) {
+        if (otherColor !== currentPlayer) {
+            for (let otherIndex = 0; otherIndex < newPawns[otherColor].length; otherIndex++) {
+                const otherPawn = newPawns[otherColor][otherIndex];
+                if (otherPawn.position === landingPosition && otherPawn.state === 'path') {
+                    triggerCaptureAnimation(otherColor, otherIndex);
+                    await new Promise(res => setTimeout(res, 500));
+                    newPawns[otherColor][otherIndex] = { position: START_POSITIONS[otherColor][otherIndex], state: 'home' };
+                    setMessage(`${currentPlayerName} hat einen Stein von ${playerConfig.find(p=>p.color===otherColor).name} geschlagen!`);
+                    return newPawns;
                 }
-            });
-        }
-
-        function renderHistoricalTrendChart(history) {
-            const last7Days = history.slice(-7);
-            const labels = last7Days.map(entry => new Date(entry.date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }));
-            const data = last7Days.map(entry => entry.total);
-
-            const ctx = document.getElementById('historical-trend-chart').getContext('2d');
-            if (historicalTrendChart) {
-                historicalTrendChart.destroy();
             }
-            historicalTrendChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Täglicher CO₂-Fußabdruck (kg)',
-                        data: data,
-                        borderColor: '#10B981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        fill: true,
-                        tension: 0.3
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: { beginAtZero: true }
-                    },
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
         }
-        
-        function updatePersonalizedTip(scores) {
-            const tipElement = document.getElementById('personalized-tip');
-            const maxCategory = Object.keys(scores).reduce((a, b) => scores[a] > scores[b] ? a : b);
+    }
+    return newPawns;
+  };
 
-            let tip = '';
-            switch (maxCategory) {
-                case 'mobility':
-                    tip = 'Dein größter Hebel heute war die Mobilität. Versuche morgen, eine Strecke zu Fuß, mit dem Rad oder den öffentlichen Verkehrsmitteln zurückzulegen.';
-                    break;
-                case 'nutrition':
-                    tip = 'Die Ernährung hatte heute den größten Einfluss. Eine pflanzliche Mahlzeit mehr pro Tag kann einen riesigen Unterschied machen, besonders wenn sie Rindfleisch ersetzt.';
-                    break;
-                case 'energy':
-                    tip = 'Der Energieverbrauch zu Hause war heute dein Hauptfaktor. Achte darauf, das Licht in ungenutzten Räumen auszuschalten und die Duschzeit um ein paar Minuten zu verkürzen.';
-                    break;
-                case 'consumption':
-                    tip = 'Dein Konsum hat heute am meisten beigetragen. Überlege vor dem nächsten Kauf, ob du den Artikel wirklich brauchst oder ob es eine gebrauchte Alternative gibt.';
-                    break;
-                default:
-                    tip = 'Dein Fußabdruck ist heute sehr ausgeglichen. Super gemacht!';
-            }
-            tipElement.textContent = tip;
+  const movePawnBySteps = async (player, pawnIndex, steps) => {
+    setIsAnimating(true);
+    let tempPawns = JSON.parse(JSON.stringify(pawns));
+    let pawnToMove = tempPawns[player][pawnIndex];
+    const currentPathIndex = PATH.indexOf(pawnToMove.position);
+    const stepsFromStart = (currentPathIndex - PATH_START_INDEX[player] + 40) % 40;
+    const newStepsFromStart = stepsFromStart + steps;
+    const newPathIndex = (PATH_START_INDEX[player] + newStepsFromStart + 40) % 40;
+    pawnToMove.position = PATH[newPathIndex];
+    tempPawns = await performCapture(tempPawns, pawnToMove.position, player);
+    setPawns(tempPawns);
+    setIsAnimating(false);
+    setTimeout(nextPlayer, 1000);
+  };
+
+  const handleEventEffect = async (event) => {
+      setShowEventModal(false);
+      const { player, index } = eventPawn;
+      switch(event.effect) {
+          case 'fly': await movePawnBySteps(player, index, 5); break;
+          case 'police': await movePawnBySteps(player, index, -3); break;
+          case 'chaos': setGameState('awaitingChaosRoll'); setMessage(`${currentPlayerName}, würfle für den Chaos-Effekt!`); setDiceValue(0); break;
+          case 'swap':
+              let swappablePawnsExist = false;
+              for (const pColor of activePlayers) {
+                  for (let pIndex = 0; pIndex < pawns[pColor].length; pIndex++) {
+                      const pawn = pawns[pColor][pIndex];
+                      if ((pColor !== player || pIndex !== index) && (pawn.state === 'path' || pawn.state === 'finish')) {
+                          swappablePawnsExist = true;
+                          break;
+                      }
+                  }
+                  if (swappablePawnsExist) break;
+              }
+              if (swappablePawnsExist) {
+                  setGameState('awaitingSwap');
+                  setMessage(`${currentPlayerName}, wähle eine Figur zum Tauschen!`);
+              } else {
+                  setMessage("Kein Tausch möglich, da keine anderen Figuren auf dem Feld sind!");
+                  setTimeout(nextPlayer, 2000);
+              }
+              break;
+          default: nextPlayer();
+      }
+  };
+  
+  const handleQuizAnswer = async (isCorrect) => {
+      setShowQuizModal(false);
+      setCurrentQuestion(null);
+      const { player, index } = eventPawn;
+      const steps = isCorrect ? 4 : -2;
+      await movePawnBySteps(player, index, steps);
+  };
+
+  const handleSwap = (targetPlayer, targetIndex) => {
+      if (gameState !== 'awaitingSwap') return;
+      const sourcePawn = pawns[eventPawn.player][eventPawn.index];
+      const targetPawn = pawns[targetPlayer][targetIndex];
+      if (sourcePawn.position === targetPawn.position) return;
+      setIsAnimating(true);
+      let newPawns = JSON.parse(JSON.stringify(pawns));
+      newPawns[eventPawn.player][eventPawn.index] = { position: targetPawn.position, state: targetPawn.state };
+      newPawns[targetPlayer][targetIndex] = { position: sourcePawn.position, state: sourcePawn.state };
+      setPawns(newPawns);
+      setTimeout(() => { setIsAnimating(false); setGameState('normal'); nextPlayer(); }, 500);
+  };
+
+  const animateAndMovePawn = async (player, pawnIndex, roll) => {
+    if (player !== currentPlayerColor || isRolling || winner || isAnimating) return;
+    if (gameState === 'chaosMovePending') {
+        if (pawnIndex !== eventPawn.index) { setMessage("Du musst die Figur bewegen, die das Ereignis ausgelöst hat."); return; }
+        const direction = roll % 2 === 0 ? 1 : -1;
+        const steps = roll * direction;
+        setGameState('normal');
+        await movePawnBySteps(player, pawnIndex, steps);
+        return;
+    }
+    if (diceValue === 0) return;
+    const movablePawns = getMovablePawns(player, roll);
+    if (!movablePawns.some(p => p.index === pawnIndex)) return setMessage("Dieser Spielstein kann nicht bewegt werden.");
+    
+    setIsAnimating(true);
+    setMessage('');
+    const pawnToMove = pawns[player][pawnIndex];
+    let pathOfAnimation = [], finalState = { ...pawnToMove };
+    if (pawnToMove.state === 'home' && roll === 6) {
+        pathOfAnimation.push(PATH_START_CELL[player]);
+        finalState = { position: PATH_START_CELL[player], state: 'path' };
+    } else if (pawnToMove.state === 'path') {
+        const currentPathIndex = PATH.indexOf(pawnToMove.position);
+        const stepsFromStart = (currentPathIndex - PATH_START_INDEX[player] + 40) % 40;
+        for (let i = 1; i <= roll; i++) {
+            const nextSteps = stepsFromStart + i;
+            if (nextSteps >= 40) {
+                const stepsIntoFinish = nextSteps - 40;
+                if (stepsIntoFinish < FINISH_LINE_CELLS[player].length) pathOfAnimation.push(FINISH_LINE_CELLS[player][stepsIntoFinish]);
+            } else pathOfAnimation.push(PATH[(PATH_START_INDEX[player] + nextSteps) % 40]);
         }
+        finalState = { position: pathOfAnimation.length > 0 ? pathOfAnimation[pathOfAnimation.length - 1] : pawnToMove.position, state: pathOfAnimation.some(p => FINISH_LINE_CELLS[player].includes(p)) ? 'finish' : 'path' };
+    } else if (pawnToMove.state === 'finish') {
+        const currentFinishIndex = FINISH_LINE_CELLS[player].indexOf(pawnToMove.position);
+        for(let i = 1; i <= roll; i++) pathOfAnimation.push(FINISH_LINE_CELLS[player][currentFinishIndex + i]);
+        finalState = { position: pathOfAnimation.length > 0 ? pathOfAnimation[pathOfAnimation.length - 1] : pawnToMove.position, state: 'finish' };
+    }
+    
+    // BUGFIX: Verhindern, auf eigenen Figuren zu landen
+    const isOccupiedBySelf = pawns[player].some(
+        (p, i) => i !== pawnIndex && p.position === finalState.position
+    );
+    if (isOccupiedBySelf) {
+        setMessage("Du kannst nicht auf einer eigenen Figur landen.");
+        setIsAnimating(false);
+        return;
+    }
 
-        async function checkTodayEntryAndDisplay() {
-            if (!firebase.currentUserId) {
-                // Diese Logik wird durch onAuthStateChanged behandelt, das die Authentifizierungssektion anzeigt.
-                // Hier brauchen wir kein showLoading, da es bereits im onAuthStateChanged Handler gesetzt wird.
-                return;
-            }
+    for (const pos of pathOfAnimation) {
+        setPawns(prev => ({ ...prev, [player]: prev[player].map((p, i) => i === pawnIndex ? { ...p, position: pos } : p) }));
+        await new Promise(res => setTimeout(res, 200));
+    }
+    let finalPawns = JSON.parse(JSON.stringify(pawns));
+    finalPawns[player][pawnIndex] = finalState;
+    if (finalState.state === 'path') { finalPawns = await performCapture(finalPawns, finalState.position, player); }
+    setPawns(finalPawns);
+    setIsAnimating(false);
+    if (finalPawns[player].every(p => p.state === 'finish')) { setWinner(player); return setMessage(`🎉 ${currentPlayerName} hat gewonnen! 🎉`); }
+    
+    setEventPawn({ player, index: pawnIndex });
+    if (EVENT_FIELDS.includes(finalState.position)) { setShowEventModal(true); return; }
+    if (QUIZ_FIELDS.includes(finalState.position)) { 
+        setCurrentQuestion(QUIZ_QUESTIONS[Math.floor(Math.random() * QUIZ_QUESTIONS.length)]);
+        setShowQuizModal(true); 
+        return; 
+    }
+    
+    if (roll !== 6) nextPlayer();
+    else { setMessage("6 gewürfelt! Würfle nochmal."); setDiceValue(0); setRollAttempts(0); }
+  };
+  
+  const boardCells = [];
+  for (let i = 0; i < 121; i++) {
+    let type = 'empty', color = '', children = null;
+    if (PATH.includes(i)) type = 'path';
+    if (Object.values(START_POSITIONS).flat().includes(i)) type = 'start_area';
+    if (Object.values(FINISH_LINE_CELLS).flat().includes(i)) type = 'finish';
+    COLORS.forEach(c => {
+      if (START_POSITIONS[c].includes(i)) color = c;
+      if (FINISH_LINE_CELLS[c].includes(i)) color = c;
+      if (PATH_START_CELL[c] === i) { type = 'start_cell'; color = c; }
+    });
+    for (const pColor of activePlayers) {
+      if(pawns[pColor]) {
+        pawns[pColor].forEach((pawn, pawnIndex) => {
+          if (pawn.position === i) {
+            const isMovable = getMovablePawns(pColor, diceValue).some(mp => mp.index === pawnIndex);
+            // BUGFIX: Korrekte Logik für die Auswahl eines Tauschziels
+            const isSelectableForSwap = gameState === 'awaitingSwap' && pColor !== currentPlayerColor && (pawn.state === 'path' || pawn.state === 'finish');
+            const animState = animatedPawn && animatedPawn.player === pColor && animatedPawn.index === pawnIndex ? animatedPawn.state : null;
             
-            showLoading(); // Lade-Overlay anzeigen, während Daten abgerufen werden
-            const today = new Date().toISOString().split('T')[0];
-            const dailyDocRef = firebase.doc(firebase.db, 'artifacts', firebase.appId, 'users', firebase.currentUserId, 'daily_entries', today);
-
-            try {
-                const docSnap = await firebase.getDoc(dailyDocRef);
-                if (docSnap.exists()) {
-                    showDashboard();
+            const pawnOnClick = () => {
+                if (gameState === 'awaitingSwap') {
+                    if (isSelectableForSwap) {
+                        handleSwap(pColor, pawnIndex);
+                    }
                 } else {
-                    showQuestionnaire();
+                    animateAndMovePawn(pColor, pawnIndex, diceValue);
                 }
-            } catch (error) {
-                console.error("Fehler beim Prüfen des Tageseintrags:", error);
-                alert("Fehler beim Laden der Daten.");
-                showQuestionnaire(); // Im Fehlerfall auf den Fragebogen zurückfallen
-            } finally {
-                hideLoading(); // Lade-Overlay ausblenden, sobald die Anzeige abgeschlossen ist
-            }
-        }
-
-        // Initialisiere Firebase und zeige den Ladebildschirm erst, wenn der DOM bereit ist.
-        document.addEventListener('DOMContentLoaded', () => {
-             document.getElementById('main-content').classList.add('hidden');
-             document.getElementById('loading-overlay').classList.remove('hidden');
-             initFirebase(); // Firebase-Initialisierung hier aufrufen
+            };
+            
+            children = (
+              <div className="absolute w-10 h-12 bottom-0 left-1/2 -translate-x-1/2 cursor-pointer z-20" onClick={pawnOnClick}>
+                <Pawn color={pColor} isHighlighted={pColor === currentPlayerColor && isMovable && !isAnimating} animationState={animState} isSelectable={isSelectableForSwap} />
+              </div>
+            );
+          }
         });
-    </script>
-</body>
-</html>
+      }
+    }
+    boardCells.push(<Cell key={i} type={type} color={color} isEvent={EVENT_FIELDS.includes(i)} isQuiz={QUIZ_FIELDS.includes(i)}>{children}</Cell>);
+  }
+
+  return (
+    <div className="p-2 md:p-4 flex flex-col items-center justify-center w-full min-h-screen bg-gray-100">
+      {showEventModal && <EventSlotMachine onFinish={handleEventEffect} />}
+      {showQuizModal && currentQuestion && <QuizModal question={currentQuestion} onAnswer={handleQuizAnswer} />}
+      {winner && <MessageBox message={message} onConfirm={onBack} />}
+      <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center lg:items-start justify-around gap-4">
+        <div className="grid grid-cols-11 gap-1 bg-gray-400 p-2 md:p-3 rounded-2xl shadow-lg"> {boardCells} </div>
+        <div className="flex flex-col items-center gap-4 p-6 bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg w-full max-w-xs">
+          <h2 className="text-2xl font-bold text-gray-700">Am Zug:</h2>
+          <div className="flex items-center gap-4 p-3 rounded-full" style={{backgroundColor: `${currentPlayerColor}33`}}>
+            <div className="w-8 h-8 rounded-full" style={{backgroundColor: currentPlayerColor}}></div>
+            <span className="text-2xl font-bold truncate" style={{color: currentPlayerColor}}>{currentPlayerName}</span>
+          </div>
+          <Dice value={diceValue || '?'} onRoll={handleRollDice} isRolling={isRolling} canRoll={!isRolling && !winner && !isAnimating && !showEventModal && !showQuizModal} />
+          <p className="text-md text-gray-600 h-10 text-center px-2">{message}</p>
+          <button onClick={onBack} className="mt-4 flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors"><LucideArrowLeft size={18} />Zurück zum Setup</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const GameSetup = ({ onStartGame }) => {
+    const [playerCount, setPlayerCount] = useState(2);
+    const [players, setPlayers] = useState([{ name: 'Spieler 1', color: 'red' }, { name: 'Spieler 2', color: 'green' }]);
+    useEffect(() => setPlayers(Array.from({ length: playerCount }, (_, i) => ({ name: `Spieler ${i + 1}`, color: COLORS[i] }))), [playerCount]);
+    const handleNameChange = (index, newName) => { const updatedPlayers = [...players]; updatedPlayers[index].name = newName; setPlayers(updatedPlayers); };
+    return (
+        <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full text-center">
+            <LucideUsers className="mx-auto text-blue-500 mb-4" size={48} />
+            <h2 className="text-3xl font-bold text-gray-800 mb-6">Spiel einrichten</h2>
+            <div className="mb-6">
+                <label className="block text-lg font-semibold text-gray-700 mb-2">Anzahl der Spieler</label>
+                <div className="flex justify-center gap-4">{[2, 3, 4].map(count => (<button key={count} onClick={() => setPlayerCount(count)} className={`w-16 h-16 rounded-full text-2xl font-bold transition-all ${playerCount === count ? 'bg-blue-500 text-white scale-110 shadow-lg' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>{count}</button>))}</div>
+            </div>
+            <div className="space-y-4 mb-8">{players.map((player, index) => (<div key={player.color} className="flex items-center gap-4"><div className="w-8 h-8 rounded-full" style={{backgroundColor: player.color}}></div><input type="text" value={player.name} onChange={(e) => handleNameChange(index, e.target.value)} className="flex-grow p-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"/></div>))}</div>
+            <button onClick={() => onStartGame(players)} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-8 rounded-full text-xl flex items-center justify-center gap-3 transition-transform transform hover:scale-105"><LucidePlay />Spiel starten</button>
+        </div>
+    );
+};
+
+const App = () => {
+  const [gameState, setGameState] = useState('setup'); // 'setup', 'playing'
+  const [players, setPlayers] = useState([]);
+  const handleStartGame = (playerConfig) => { setPlayers(playerConfig); setGameState('playing'); };
+  const handleBackToSetup = () => { setGameState('setup'); setPlayers([]); }
+  const renderContent = () => {
+    switch(gameState) {
+        case 'playing': return <LudoGame onBack={handleBackToSetup} players={players} />;
+        case 'setup': default: return <GameSetup onStartGame={handleStartGame} />;
+    }
+  };
+  return (
+    <div className="bg-gray-100 min-h-screen w-full flex items-center justify-center font-sans p-4">
+      <style>{`
+        .animate-slot-machine { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+        .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; } 
+        @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
+      `}</style>
+      {renderContent()}
+    </div>
+  );
+};
+
+export default App;
+
