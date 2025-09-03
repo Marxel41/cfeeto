@@ -32,7 +32,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # Die Zeile "cache: 'npm'" wurde entfernt, um den Fehler zu beheben.
 
       # 3. Schritt: Alle Projektabhängigkeiten installieren (wie "npm install")
       - name: Install Dependencies 📦
@@ -57,3 +57,4 @@ jobs:
       - name: Deploy to GitHub Pages 🌐
         id: deployment
         uses: actions/deploy-pages@v4
+
