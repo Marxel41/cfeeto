@@ -6,5 +6,5 @@ export default defineConfig({
   plugins: [react()],
   // WICHTIG: Ersetze 'DEIN-REPO-NAME' mit dem Namen deines GitHub-Repositorys!
   // Beispiel: base: '/brettspiel-palast/',
-  base: '/DEIN-REPO-NAME/',
+  base: 'cfeeto',
 })
