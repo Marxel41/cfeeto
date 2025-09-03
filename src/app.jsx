@@ -1,3 +1,4 @@
+// START DER DATEI: src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { LucideDices, LucideCrown, LucideArrowLeft, LucideUsers, LucidePlay, LucideStar, LucideHelpCircle, LucideGamepad2 } from 'lucide-react';
 
@@ -312,13 +313,15 @@ const TicTacToeModal = ({ onFinish }) => {
             const bestMove = minimax(board, 'O').index;
             setTimeout(() => {
                 const newBoard = [...board];
-                newBoard[bestMove] = 'O';
-                setBoard(newBoard);
-                setIsPlayerTurn(true);
-                const gameWinner = checkWinner(newBoard);
-                if (gameWinner) {
-                    setWinner(gameWinner);
-                    setGameOver(true);
+                if(newBoard[bestMove] === null) {
+                    newBoard[bestMove] = 'O';
+                    setBoard(newBoard);
+                    setIsPlayerTurn(true);
+                    const gameWinner = checkWinner(newBoard);
+                    if (gameWinner) {
+                        setWinner(gameWinner);
+                        setGameOver(true);
+                    }
                 }
             }, 500);
         }
@@ -768,4 +771,6 @@ const App = () => {
   );
 };
 
+// ENDE DER DATEI: src/App.jsx
 export default App;
+
