@@ -33,7 +33,6 @@ const QUIZ_FIELDS = [PATH[3], PATH[13], PATH[23], PATH[33]];
 const TICTACTOE_FIELDS = [PATH[2], PATH[12], PATH[22], PATH[32]];
 
 const QUIZ_QUESTIONS = [
-    // Existing Questions
     { question: 'Wie viele Liter Bier trinken die Deutschen durchschnittlich pro Kopf und Jahr?', answers: [{text: 'Ca. 100 Liter', isCorrect: true}, {text: 'Ca. 50 Liter', isCorrect: false}, {text: 'Ca. 150 Liter', isCorrect: false}] },
     { question: 'Wie hoch ist der Eiffelturm in Paris (inkl. Antennen)?', answers: [{text: '286 Meter', isCorrect: false}, {text: '330 Meter', isCorrect: true}, {text: '381 Meter', isCorrect: false}] },
     { question: 'Wie viele Herzen hat ein Oktopus?', answers: [{text: 'Eins', isCorrect: false}, {text: 'Zwei', isCorrect: false}, {text: 'Drei', isCorrect: true}] },
@@ -623,7 +622,11 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
         finalState = { position: pathOfAnimation.length > 0 ? pathOfAnimation.at(-1) : pawnToMove.position, state: pathOfAnimation.some(p => FINISH_LINE_CELLS[player].includes(p)) ? 'finish' : 'path' };
     } else if (pawnToMove.state === 'finish') {
         const currentFinishIndex = FINISH_LINE_CELLS[player].indexOf(pawnToMove.position);
-        for(let i = 1; i <= roll; i++) pathOfAnimation.push(FINISH_LINE_CELLS[player][currentFinishIndex + i]);
+        for(let i = 1; i <= roll; i++) {
+            if (currentFinishIndex + i < FINISH_LINE_CELLS[player].length) {
+                pathOfAnimation.push(FINISH_LINE_CELLS[player][currentFinishIndex + i]);
+            }
+        }
         finalState = { position: pathOfAnimation.length > 0 ? pathOfAnimation.at(-1) : pawnToMove.position, state: 'finish' };
     }
 
@@ -636,7 +639,11 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
     if (finalState.state === 'path') { finalPawns = await performCapture(finalPawns, finalState.position, player); }
     setPawns(finalPawns);
     setIsAnimating(false);
-    if (finalPawns[player].every(p => p.state === 'finish')) { setWinner(player); return setMessage(`🎉 ${currentPlayerName} hat gewonnen! 🎉`); }
+    
+    if (finalPawns[player].every(p => p.state === 'finish')) { 
+        setWinner(player); 
+        return setMessage(`🎉 ${currentPlayerName} hat gewonnen! 🎉`); 
+    }
     
     setEventPawn({ player, index: pawnIndex });
     if (EVENT_FIELDS.includes(finalState.position)) { setShowEventModal(true); return; }
