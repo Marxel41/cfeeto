@@ -1,5 +1,6 @@
+// START DER DATEI: src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { LucideDices, LucideCrown, LucideArrowLeft, LucideUsers, LucidePlay, LucideStar, LucideHelpCircle, LucideGamepad2 } from 'lucide-react';
+import { LucideDices, LucideCrown, LucideArrowLeft, LucideUsers, LucidePlay, LucideStar, LucideHelpCircle, LucideGamepad2, LucideShuffle, LucideCircleDot, LucideBrainCircuit, LucideShield, LucideDelete } from 'lucide-react';
 
 // --- Helper-Funktionen & Konfiguration ---
 
@@ -21,7 +22,14 @@ const FINISH_LINE_CELLS = {
   red: [56, 57, 58, 59], green: [16, 27, 38, 49], yellow: [64, 63, 62, 61], blue: [104, 93, 82, 71],
 };
 
-const EVENT_FIELDS = [PATH[5], PATH[15], PATH[25], PATH[35]];
+// --- New Field Distribution ---
+const IMMUNITY_FIELDS = [PATH[4], PATH[14], PATH[24], PATH[34]];
+const MEMORYGAME_FIELDS = [PATH[1], PATH[11], PATH[21], PATH[31]];
+const TICTACTOE_FIELDS = [PATH[3], PATH[13], PATH[23], PATH[33]];
+const EVENT_FIELDS = [PATH[6], PATH[16], PATH[26], PATH[36]];
+const QUIZ_FIELDS = [PATH[7], PATH[17], PATH[27], PATH[37]];
+const SHELLGAME_FIELDS = [PATH[9], PATH[19], PATH[29], PATH[39]];
+
 const EVENTS = [
     { name: 'Flugzeugfeld', emoji: '✈️', effect: 'fly', description: 'Du fliegst 5 Felder weiter nach vorne! Steht dort jemand, wird er rausgeworfen.' },
     { name: 'Tauschfeld', emoji: '🔄', effect: 'swap', description: 'Tausche deine Position mit einer beliebigen anderen Figur auf dem Feld.' },
@@ -29,11 +37,7 @@ const EVENTS = [
     { name: 'Chaosfeld', emoji: '🎲', effect: 'chaos', description: 'Würfle nochmal! Gerade Zahl: vorwärts, ungerade Zahl: rückwärts.' },
 ];
 
-const QUIZ_FIELDS = [PATH[3], PATH[13], PATH[23], PATH[33]];
-const TICTACTOE_FIELDS = [PATH[2], PATH[12], PATH[22], PATH[32]];
-
 const QUIZ_QUESTIONS = [
-    // Existing Questions
     { question: 'Wie viele Liter Bier trinken die Deutschen durchschnittlich pro Kopf und Jahr?', answers: [{text: 'Ca. 100 Liter', isCorrect: true}, {text: 'Ca. 50 Liter', isCorrect: false}, {text: 'Ca. 150 Liter', isCorrect: false}] },
     { question: 'Wie hoch ist der Eiffelturm in Paris (inkl. Antennen)?', answers: [{text: '286 Meter', isCorrect: false}, {text: '330 Meter', isCorrect: true}, {text: '381 Meter', isCorrect: false}] },
     { question: 'Wie viele Herzen hat ein Oktopus?', answers: [{text: 'Eins', isCorrect: false}, {text: 'Zwei', isCorrect: false}, {text: 'Drei', isCorrect: true}] },
@@ -127,23 +131,41 @@ const Pawn = ({ color, isHighlighted, animationState, isSelectable }) => {
     );
 };
 
-const Cell = ({ type, color, children, isEvent, isQuiz, isTicTacToe }) => {
-  const baseClasses = "w-9 h-9 md:w-10 md:h-10 rounded-md transition-colors duration-200 relative";
+const Cell = ({ type, color, children, isEvent, isQuiz, isTicTacToe, isShellGame, isMemoryGame, isImmunity }) => {
+  const baseClasses = "rounded-sm md:rounded-md transition-colors duration-200 relative aspect-square";
+  
+  const typeColorStyles = {
+    start_cell: {
+        red: 'bg-gradient-to-br from-red-300 to-red-400', green: 'bg-gradient-to-br from-green-300 to-green-400',
+        blue: 'bg-gradient-to-br from-blue-300 to-blue-400', yellow: 'bg-gradient-to-br from-yellow-300 to-yellow-400',
+    },
+    start_area: {
+        red: 'bg-red-100 border-2 border-dashed border-red-300', green: 'bg-green-100 border-2 border-dashed border-green-300',
+        blue: 'bg-blue-100 border-2 border-dashed border-blue-300', yellow: 'bg-yellow-100 border-2 border-dashed border-yellow-300',
+    },
+    finish: {
+        red: 'bg-gradient-to-br from-red-200 to-red-300', green: 'bg-gradient-to-br from-green-200 to-green-300',
+        blue: 'bg-gradient-to-br from-blue-200 to-blue-300', yellow: 'bg-gradient-to-br from-yellow-200 to-yellow-300',
+    }
+  };
+  
   let styleClasses = '';
-  switch (type) {
-    case 'path': styleClasses = 'bg-stone-200 shadow-inner'; break;
-    case 'start_cell': styleClasses = `bg-gradient-to-br from-${color}-300 to-${color}-400 shadow-inner`; break;
-    case 'start_area': styleClasses = `bg-${color}-100 border-2 border-dashed border-${color}-300`; break;
-    case 'finish': styleClasses = `bg-gradient-to-br from-${color}-200 to-${color}-300 shadow-inner`; break;
-    case 'empty': styleClasses = 'bg-transparent pointer-events-none'; break;
-    default: styleClasses = 'bg-gray-100';
+  if (type === 'path') styleClasses = 'bg-stone-200 shadow-inner';
+  else if (type === 'empty') styleClasses = 'bg-transparent pointer-events-none';
+  else if (typeColorStyles[type] && typeColorStyles[type][color]) {
+    styleClasses = typeColorStyles[type][color];
+  } else {
+    styleClasses = 'bg-gray-100';
   }
 
   return (
     <div className={`${baseClasses} ${styleClasses}`}>
-      {isEvent && <LucideStar className="absolute text-yellow-400 opacity-80" style={{filter: 'drop-shadow(0 0 3px #000)'}} size={24} />}
-      {isQuiz && <LucideHelpCircle className="absolute text-purple-400 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} size={24} />}
-      {isTicTacToe && <LucideGamepad2 className="absolute text-indigo-500 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} size={24} />}
+      {isEvent && <LucideStar className="absolute w-3/5 h-3/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-yellow-400 opacity-80" style={{filter: 'drop-shadow(0 0 3px #000)'}} />}
+      {isQuiz && <LucideHelpCircle className="absolute w-3/5 h-3/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-purple-400 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} />}
+      {isTicTacToe && <LucideGamepad2 className="absolute w-3/5 h-3/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-indigo-500 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} />}
+      {isShellGame && <LucideShuffle className="absolute w-3/5 h-3/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-orange-500 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} />}
+      {isMemoryGame && <LucideBrainCircuit className="absolute w-3/5 h-3/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-pink-500 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} />}
+      {isImmunity && <LucideShield className="absolute w-3/5 h-3/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-teal-500 opacity-90" style={{filter: 'drop-shadow(0 0 3px #000)'}} />}
       <div className="relative z-10 w-full h-full overflow-visible">{children}</div>
     </div>
   );
@@ -310,18 +332,23 @@ const TicTacToeModal = ({ onFinish }) => {
     
     useEffect(() => {
         if (!isPlayerTurn && !gameOver) {
-            const bestMove = minimax(board, 'O').index;
-            setTimeout(() => {
-                const newBoard = [...board];
-                newBoard[bestMove] = 'O';
-                setBoard(newBoard);
-                setIsPlayerTurn(true);
-                const gameWinner = checkWinner(newBoard);
-                if (gameWinner) {
-                    setWinner(gameWinner);
-                    setGameOver(true);
-                }
-            }, 500);
+            const emptySquares = board.map((val, idx) => val === null ? idx : null).filter(val => val !== null);
+            if(emptySquares.length > 0) {
+                 const bestMove = minimax(board, 'O').index;
+                 setTimeout(() => {
+                    const newBoard = [...board];
+                    if(newBoard[bestMove] === null) {
+                        newBoard[bestMove] = 'O';
+                        setBoard(newBoard);
+                        setIsPlayerTurn(true);
+                        const gameWinner = checkWinner(newBoard);
+                        if (gameWinner) {
+                            setWinner(gameWinner);
+                            setGameOver(true);
+                        }
+                    }
+                }, 500);
+            }
         }
     }, [isPlayerTurn, board, gameOver]);
 
@@ -349,12 +376,169 @@ const TicTacToeModal = ({ onFinish }) => {
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">Tic-Tac-Toe Duell!</h2>
                 <div className="grid grid-cols-3 gap-2 my-6">
                     {board.map((value, index) => (
-                        <button key={index} onClick={() => handlePlayerMove(index)} className="w-20 h-20 bg-gray-200 rounded-lg flex items-center justify-center text-5xl font-bold text-gray-700">
+                        <button key={index} onClick={() => handlePlayerMove(index)} className={`w-20 h-20 bg-gray-200 rounded-lg flex items-center justify-center text-5xl font-bold ${value === 'X' ? 'text-blue-500' : 'text-red-500'}`}>
                             {value}
                         </button>
                     ))}
                 </div>
                 <p className="text-xl font-semibold h-8">{getResultMessage()}</p>
+            </div>
+        </div>
+    );
+};
+
+const ShellGameModal = ({ onFinish }) => {
+    const [cups, setCups] = useState(() => {
+        const winningCupId = Math.floor(Math.random() * 3);
+        return [
+            { id: 0, order: 0, hasBall: winningCupId === 0 },
+            { id: 1, order: 1, hasBall: winningCupId === 1 },
+            { id: 2, order: 2, hasBall: winningCupId === 2 },
+        ];
+    });
+    const [phase, setPhase] = useState('start'); // start, shuffling, playing, reveal
+    const [message, setMessage] = useState('Finde die Kugel!');
+    const [selectedCup, setSelectedCup] = useState(null);
+
+    const shuffle = (array) => {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+        return array;
+    }
+
+    useEffect(() => {
+        if (phase === 'start') {
+            setTimeout(() => setPhase('shuffling'), 2000);
+        }
+        if (phase === 'shuffling') {
+            let shuffleCount = 0;
+            const interval = setInterval(() => {
+                setCups(prevCups => {
+                    const newOrder = shuffle([...prevCups.map(c => c.order)]);
+                    return prevCups.map((cup, i) => ({ ...cup, order: newOrder[i] }));
+                });
+                shuffleCount++;
+                if (shuffleCount >= 5) {
+                    clearInterval(interval);
+                    setPhase('playing');
+                }
+            }, 600);
+        }
+    }, [phase]);
+
+    const handleCupClick = (cup) => {
+        if (phase !== 'playing') return;
+        setSelectedCup(cup.id);
+        setPhase('reveal');
+        const won = cup.hasBall;
+        setMessage(won ? 'Gefunden! 3 Felder vor.' : 'Leider falsch! 3 Felder zurück.');
+        setTimeout(() => onFinish(won), 2500);
+    }
+    
+    const getCupPosition = (order) => {
+        if (order === 0) return 'translate-x-[-110%]';
+        if (order === 1) return 'translate-x-[0%]';
+        if (order === 2) return 'translate-x-[110%]';
+    }
+
+    return (
+        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl p-8 text-center max-w-md w-full">
+                <LucideShuffle className="mx-auto text-orange-500 mb-4" size={48} />
+                <h2 className="text-2xl font-bold text-gray-800 mb-4">Hütchenspiel!</h2>
+                <div className="relative w-full h-32 my-4 flex justify-center items-center">
+                    {cups.map((cup) => (
+                        <div key={cup.id} 
+                            onClick={() => handleCupClick(cup)}
+                            className={`absolute w-24 h-24 transition-transform duration-500 ease-in-out ${getCupPosition(cup.order)} ${phase === 'playing' ? 'cursor-pointer hover:scale-110' : ''} ${phase === 'reveal' && selectedCup === cup.id ? 'translate-y-[-30px]' : ''}`}
+                        >
+                            <div className="w-full h-full bg-red-500 rounded-t-full shadow-lg"></div>
+                            {((phase === 'start' || phase === 'reveal') && cup.hasBall) && <LucideCircleDot className="absolute bottom-1 left-1/2 -translate-x-1/2 text-yellow-300" size={32}/> }
+                        </div>
+                    ))}
+                </div>
+                 <p className="text-xl font-semibold h-8">{message}</p>
+            </div>
+        </div>
+    )
+}
+
+const MemoryGameModal = ({ onFinish }) => {
+    const [sequence, setSequence] = useState('');
+    const [phase, setPhase] = useState('showing'); // showing, input, result
+    const [inputValue, setInputValue] = useState('');
+    const [result, setResult] = useState(null); // 'correct' | 'incorrect'
+
+    useEffect(() => {
+        let newSequence = '';
+        for (let i = 0; i < 6; i++) {
+            newSequence += Math.floor(Math.random() * 10);
+        }
+        setSequence(newSequence);
+
+        const timer = setTimeout(() => {
+            setPhase('input');
+        }, 4000); 
+
+        return () => clearTimeout(timer);
+    }, []);
+
+    const handleInput = (char) => {
+        if (inputValue.length < 6) {
+            setInputValue(inputValue + char);
+        }
+    };
+    
+    const handleDelete = () => {
+        setInputValue(inputValue.slice(0, -1));
+    };
+
+    const handleSubmit = () => {
+        if (phase !== 'input') return;
+        
+        const isCorrect = inputValue === sequence;
+        setResult(isCorrect ? 'correct' : 'incorrect');
+        setPhase('result');
+
+        setTimeout(() => {
+            onFinish(isCorrect);
+        }, 2000);
+    };
+
+    const keypad = ['1','2','3','4','5','6','7','8','9','0'];
+
+    return (
+        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl p-8 text-center max-w-sm w-full">
+                <LucideBrainCircuit className="mx-auto text-pink-500 mb-4" size={48} />
+                <h2 className="text-2xl font-bold text-gray-800 mb-4">Gedächtnisspiel!</h2>
+                {phase === 'showing' && (
+                    <div>
+                        <p className="text-lg text-gray-600 mb-4">Merke dir diese Zahlenfolge:</p>
+                        <p className="text-5xl font-bold tracking-widest text-gray-800 p-4 bg-gray-100 rounded-lg">{sequence}</p>
+                    </div>
+                )}
+                {(phase === 'input' || phase === 'result') && (
+                    <div>
+                        <p className="text-lg text-gray-600 mb-4">{phase === 'input' ? 'Gib die Zahlenfolge ein:' : 'Deine Eingabe:'}</p>
+                         <div className="w-full text-center text-4xl font-bold tracking-widest p-4 h-20 border-2 border-gray-300 rounded-lg bg-gray-100 mb-4 flex items-center justify-center">
+                            {inputValue}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                           {keypad.map(key => <button key={key} onClick={() => handleInput(key)} className="py-4 text-2xl font-bold bg-gray-200 rounded-lg hover:bg-pink-200 transition">{key}</button>)}
+                           <button onClick={handleDelete} className="py-4 text-2xl font-bold bg-gray-300 rounded-lg hover:bg-red-300 transition col-span-2"><LucideDelete className="mx-auto"/></button>
+                        </div>
+                        <button onClick={handleSubmit} className="mt-4 w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-3 px-6 rounded-lg text-lg">Prüfen</button>
+                    </div>
+                )}
+                {phase === 'result' && (
+                     <div>
+                        {result === 'correct' && <p className="mt-4 text-xl font-bold text-green-600 animate-pulse">Richtig! 4 Felder vorwärts.</p>}
+                        {result === 'incorrect' && <p className="mt-4 text-xl font-bold text-red-600 animate-pulse">Falsch! 2 Felder zurück.</p>}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -378,6 +562,8 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
   const [showEventModal, setShowEventModal] = useState(false);
   const [showQuizModal, setShowQuizModal] = useState(false);
   const [showTicTacToeModal, setShowTicTacToeModal] = useState(false);
+  const [showShellGameModal, setShowShellGameModal] = useState(false);
+  const [showMemoryGameModal, setShowMemoryGameModal] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [eventPawn, setEventPawn] = useState(null);
   const [gameState, setGameState] = useState('normal');
@@ -385,6 +571,11 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
 
   const currentPlayerColor = activePlayers[currentPlayerIndex];
   const currentPlayerName = playerConfig.find(p => p.color === currentPlayerColor).name;
+  
+  const allPawnsHome = pawns[currentPlayerColor].every(p => p.state === 'home');
+  const canAttemptAgain = allPawnsHome && diceValue !== 6 && rollAttempts < 3;
+  const canRoll = !isRolling && !winner && !isAnimating && !showEventModal && !showQuizModal && !showTicTacToeModal && !showShellGameModal && !showMemoryGameModal && (diceValue === 0 || canAttemptAgain);
+
 
   function initializePawnState() {
     const state = {};
@@ -404,11 +595,7 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
   };
 
   const handleRollDice = () => {
-    const allPawnsHome = pawns[currentPlayerColor].every(p => p.state === 'home');
-    const isAttemptingToLeaveHome = allPawnsHome && diceValue !== 6;
-
-    if (gameState !== 'awaitingChaosRoll' && (winner || isRolling || (diceValue !== 0 && !isAttemptingToLeaveHome) || isAnimating || showEventModal || showQuizModal || showTicTacToeModal)) return;
-    if (gameState === 'awaitingChaosRoll' && isRolling) return;
+    if (!canRoll) return;
 
     setIsRolling(true);
     setMessage('');
@@ -438,6 +625,7 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
           setRollAttempts(newAttempts);
           setMessage(`Versuch ${newAttempts}/3. Würfle nochmal!`);
         } else {
+          setRollAttempts(newAttempts); // Set to 3 to disable button
           setMessage(`${currentPlayerName} konnte nicht rauskommen.`);
           setTimeout(nextPlayer, 1500);
         }
@@ -505,16 +693,23 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
     return allPossibleMoves.filter(p => !(roll === 6 && p.state === 'home' && startCellOccupiedByOwn));
 };
 
-  const performCapture = async (newPawns, landingPosition, currentPlayer) => {
-    for (const otherColor of activePlayers) {
-        if (otherColor !== currentPlayer) {
-            for (let otherIndex = 0; otherIndex < newPawns[otherColor].length; otherIndex++) {
-                const otherPawn = newPawns[otherColor][otherIndex];
-                if (otherPawn.position === landingPosition && otherPawn.state === 'path') {
-                    triggerCaptureAnimation(otherColor, otherIndex);
+  const performCapture = async (newPawns, landingPosition, attackerColor, attackerIndex) => {
+    for (const defenderColor of activePlayers) {
+        if (defenderColor !== attackerColor) {
+            for (let defenderIndex = 0; defenderIndex < newPawns[defenderColor].length; defenderIndex++) {
+                const defenderPawn = newPawns[defenderColor][defenderIndex];
+                if (defenderPawn.position === landingPosition && defenderPawn.state === 'path') {
+                    if (IMMUNITY_FIELDS.includes(landingPosition)) {
+                        triggerCaptureAnimation(attackerColor, attackerIndex);
+                        await new Promise(res => setTimeout(res, 500));
+                        newPawns[attackerColor][attackerIndex] = { position: START_POSITIONS[attackerColor][attackerIndex], state: 'home' };
+                        setMessage(`🛡️ ${playerConfig.find(p=>p.color===defenderColor).name} war immun! ${currentPlayerName} wurde geschlagen!`);
+                        return newPawns;
+                    }
+                    triggerCaptureAnimation(defenderColor, defenderIndex);
                     await new Promise(res => setTimeout(res, 500));
-                    newPawns[otherColor][otherIndex] = { position: START_POSITIONS[otherColor][otherIndex], state: 'home' };
-                    setMessage(`${currentPlayerName} hat einen Stein von ${playerConfig.find(p=>p.color===otherColor).name} geschlagen!`);
+                    newPawns[defenderColor][defenderIndex] = { position: START_POSITIONS[defenderColor][defenderIndex], state: 'home' };
+                    setMessage(`${currentPlayerName} hat einen Stein von ${playerConfig.find(p=>p.color===defenderColor).name} geschlagen!`);
                     return newPawns;
                 }
             }
@@ -527,12 +722,28 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
     setIsAnimating(true);
     let tempPawns = JSON.parse(JSON.stringify(pawns));
     let pawnToMove = tempPawns[player][pawnIndex];
+    
+    if (pawnToMove.state !== 'path') {
+        setMessage("Figur im Haus/Ziel kann nicht durch Ereignis bewegt werden.");
+        setIsAnimating(false);
+        setTimeout(nextPlayer, 1500);
+        return;
+    }
+
     const currentPathIndex = PATH.indexOf(pawnToMove.position);
     const stepsFromStart = (currentPathIndex - PATH_START_INDEX[player] + 40) % 40;
-    const newStepsFromStart = stepsFromStart + steps;
-    const newPathIndex = (PATH_START_INDEX[player] + newStepsFromStart + 40) % 40;
-    pawnToMove.position = PATH[newPathIndex];
-    tempPawns = await performCapture(tempPawns, pawnToMove.position, player);
+    let newStepsFromStart = stepsFromStart + steps;
+    
+    if (steps < 0 && newStepsFromStart < 0) {
+        newStepsFromStart = 0; 
+    }
+    
+    const newPathIndex = (PATH_START_INDEX[player] + newStepsFromStart) % 40;
+    const finalPosition = PATH[newPathIndex];
+    pawnToMove.position = finalPosition;
+    
+    tempPawns = await performCapture(tempPawns, finalPosition, player, pawnIndex);
+
     setPawns(tempPawns);
     setIsAnimating(false);
     setTimeout(nextPlayer, 1000);
@@ -574,6 +785,20 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
         if (result === 'win') steps = 5;
         else if (result === 'loss') steps = -5;
         else if (result === 'draw') steps = 2;
+        await movePawnBySteps(player, index, steps);
+    };
+
+    const handleShellGameFinish = async (won) => {
+        setShowShellGameModal(false);
+        const { player, index } = eventPawn;
+        const steps = won ? 3 : -3;
+        await movePawnBySteps(player, index, steps);
+    };
+
+    const handleMemoryGameFinish = async (isCorrect) => {
+        setShowMemoryGameModal(false);
+        const { player, index } = eventPawn;
+        const steps = isCorrect ? 4 : -2;
         await movePawnBySteps(player, index, steps);
     };
 
@@ -623,7 +848,11 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
         finalState = { position: pathOfAnimation.length > 0 ? pathOfAnimation.at(-1) : pawnToMove.position, state: pathOfAnimation.some(p => FINISH_LINE_CELLS[player].includes(p)) ? 'finish' : 'path' };
     } else if (pawnToMove.state === 'finish') {
         const currentFinishIndex = FINISH_LINE_CELLS[player].indexOf(pawnToMove.position);
-        for(let i = 1; i <= roll; i++) pathOfAnimation.push(FINISH_LINE_CELLS[player][currentFinishIndex + i]);
+        for(let i = 1; i <= roll; i++) {
+            if (currentFinishIndex + i < FINISH_LINE_CELLS[player].length) {
+                pathOfAnimation.push(FINISH_LINE_CELLS[player][currentFinishIndex + i]);
+            }
+        }
         finalState = { position: pathOfAnimation.length > 0 ? pathOfAnimation.at(-1) : pawnToMove.position, state: 'finish' };
     }
 
@@ -633,10 +862,14 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
     }
     let finalPawns = JSON.parse(JSON.stringify(pawns));
     finalPawns[player][pawnIndex] = finalState;
-    if (finalState.state === 'path') { finalPawns = await performCapture(finalPawns, finalState.position, player); }
+    if (finalState.state === 'path') { finalPawns = await performCapture(finalPawns, finalState.position, player, pawnIndex); }
     setPawns(finalPawns);
     setIsAnimating(false);
-    if (finalPawns[player].every(p => p.state === 'finish')) { setWinner(player); return setMessage(`🎉 ${currentPlayerName} hat gewonnen! 🎉`); }
+    
+    if (finalPawns[player].every(p => p.state === 'finish')) { 
+        setWinner(player); 
+        return setMessage(`🎉 ${currentPlayerName} hat gewonnen! 🎉`); 
+    }
     
     setEventPawn({ player, index: pawnIndex });
     if (EVENT_FIELDS.includes(finalState.position)) { setShowEventModal(true); return; }
@@ -653,6 +886,8 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
         return; 
     }
     if (TICTACTOE_FIELDS.includes(finalState.position)) { setShowTicTacToeModal(true); return; }
+    if (SHELLGAME_FIELDS.includes(finalState.position)) { setShowShellGameModal(true); return; }
+    if (MEMORYGAME_FIELDS.includes(finalState.position)) { setShowMemoryGameModal(true); return; }
     
     if (roll !== 6) nextPlayer();
     else { setMessage("6 gewürfelt! Würfle nochmal."); setDiceValue(0); setRollAttempts(0); }
@@ -686,13 +921,13 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
             const animState = animatedPawn && animatedPawn.player === pColor && animatedPawn.index === pawnIndex ? animatedPawn.state : null;
             const pawnOnClick = () => gameState === 'awaitingSwap' ? (isSelectableForSwap && handleSwap(pColor, pawnIndex)) : animateAndMovePawn(pColor, pawnIndex, diceValue);
             return (
-              <div key={`${pColor}-${pawnIndex}`} className="absolute w-10 h-12 bottom-0 left-1/2 -translate-x-1/2 cursor-pointer z-20" onClick={pawnOnClick}>
+              <div key={`${pColor}-${pawnIndex}`} className="absolute w-[110%] h-[130%] -bottom-[10%] left-1/2 -translate-x-1/2 cursor-pointer z-20" onClick={pawnOnClick}>
                 <Pawn color={pColor} isHighlighted={pColor === currentPlayerColor && isMovable && !isAnimating} animationState={animState} isSelectable={isSelectableForSwap} />
               </div>
             );
         });
     }
-    boardCells.push(<Cell key={i} type={type} color={color} isEvent={EVENT_FIELDS.includes(i)} isQuiz={QUIZ_FIELDS.includes(i)} isTicTacToe={TICTACTOE_FIELDS.includes(i)}>{children}</Cell>);
+    boardCells.push(<Cell key={i} type={type} color={color} isEvent={EVENT_FIELDS.includes(i)} isQuiz={QUIZ_FIELDS.includes(i)} isTicTacToe={TICTACTOE_FIELDS.includes(i)} isShellGame={SHELLGAME_FIELDS.includes(i)} isMemoryGame={MEMORYGAME_FIELDS.includes(i)} isImmunity={IMMUNITY_FIELDS.includes(i)}>{children}</Cell>);
   }
 
   return (
@@ -700,16 +935,23 @@ const LudoGame = ({ onBack, players: playerConfig }) => {
       {showEventModal && <EventSlotMachine onFinish={handleEventEffect} />}
       {showQuizModal && currentQuestion && <QuizModal question={currentQuestion} onAnswer={handleQuizAnswer} />}
       {showTicTacToeModal && <TicTacToeModal onFinish={handleTicTacToeFinish} />}
+      {showShellGameModal && <ShellGameModal onFinish={handleShellGameFinish} />}
+      {showMemoryGameModal && <MemoryGameModal onFinish={handleMemoryGameFinish} />}
       {winner && <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50"><div className="bg-white p-8 rounded-2xl shadow-2xl text-center"><p className="text-3xl font-bold mb-6">{message}</p><button onClick={onBack} className="bg-blue-500 text-white px-8 py-3 rounded-full text-lg">Neues Spiel</button></div></div>}
-      <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center lg:items-start justify-around gap-4">
-        <div className="grid grid-cols-11 gap-1 bg-gray-400 p-2 md:p-3 rounded-2xl shadow-lg"> {boardCells} </div>
-        <div className="flex flex-col items-center gap-4 p-6 bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg w-full max-w-xs">
+      
+      <div className="w-full max-w-7xl flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 lg:gap-8">
+        <div className="w-full lg:w-auto flex-shrink-0 flex items-center justify-center">
+             <div className="grid grid-cols-11 gap-px md:gap-1 bg-gray-400 p-2 md:p-3 rounded-2xl shadow-lg aspect-square w-full max-w-lg lg:max-w-[70vh] lg:max-h-[90vh]">
+                {boardCells}
+             </div>
+        </div>
+        <div className="flex flex-col items-center gap-4 p-6 bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg w-full max-w-xs lg:w-64 flex-shrink-0">
           <h2 className="text-2xl font-bold text-gray-700">Am Zug:</h2>
           <div className="flex items-center gap-4 p-3 rounded-full" style={{backgroundColor: `${currentPlayerColor}33`}}>
             <div className="w-8 h-8 rounded-full" style={{backgroundColor: currentPlayerColor}}></div>
             <span className="text-2xl font-bold truncate" style={{color: currentPlayerColor}}>{currentPlayerName}</span>
           </div>
-          <Dice value={diceValue || '?'} onRoll={handleRollDice} isRolling={isRolling} canRoll={!isRolling && !winner && !isAnimating && !showEventModal && !showQuizModal && !showTicTacToeModal} />
+          <Dice value={diceValue || '?'} onRoll={handleRollDice} isRolling={isRolling} canRoll={canRoll} />
           <p className="text-md text-gray-600 h-10 text-center px-2">{message}</p>
           <button onClick={onBack} className="mt-4 flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors"><LucideArrowLeft size={18} />Zurück zum Setup</button>
         </div>
@@ -761,5 +1003,6 @@ const App = () => {
   );
 };
 
+// ENDE DER DATEI: src/App.jsx
 export default App;
 
